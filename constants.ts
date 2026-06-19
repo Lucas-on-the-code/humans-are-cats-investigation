@@ -115,6 +115,58 @@ export const LYRICS = {
   ]
 };
 
+// English versions (i18n)
+export const LYRICS_EN = {
+  intro: [
+    ">>> Establishing secure connection...",
+    "Codename: MOUSE",
+    "Status: Infiltrated the canopy",
+    "--------------------------------",
+    "🎮 Endless Escape Mode:",
+    "Full manual control. The further right you explore, the higher your score.",
+    "",
+    "🎮 Controls:",
+    "[←/→] or [A/D] Move",
+    "[↑/Space] Jump / [↓] Slide",
+    "[Shift/D] Dash",
+    "[F/Left Click/●] Meow Wave (Probe)",
+    "Collect, narrowly dodge, and scan targets to boost your combo multiplier.",
+    "",
+    "Reach 0 HP to end the run and enter the leaderboard."
+  ],
+  ending: [
+    "📶 Mission Report...",
+    "Cat-ification complete.",
+    "Infiltration successful.",
+    "MISSION ACCOMPLISHED."
+  ]
+};
+
+export const INTERACTION_QUOTES_EN = [
+  "That's strange...",
+  "I want that can of food too.",
+  "Cats, cats, everywhere cats.",
+  "Even the streetlight looks like a scratching post.",
+  "I want to go back to Mars."
+];
+
+export const RANDOM_NPC_CHAT_LINES_EN = [
+  "I just lent my umbrella to a cloud.",
+  "Did you hear the convenience store freezer practicing scales?",
+  "The streetlight looks very ambitious today.",
+  "If fish took the subway, what card would they swipe?",
+  "I'm not spacing out — I'm buffering life.",
+  "A taxi asked me for change earlier.",
+  "Don't trust spinning signs. They know too much.",
+  "Maybe there aren't more cats. Maybe the world just got smaller."
+];
+
+export const MIKU_CHAT_OPENING_LINES_EN = [
+  "Hi, I'm Hatsune Miku. Want to chat for a bit?",
+  "I was just thinking of taking a break. Care to talk?",
+  "If you'd like, we could stand here and chat for a while."
+];
+
 export const IDLE_SPRITE_URLS = [
   "/sprites/idle/idle_0.png",
   "/sprites/idle/idle_1.png",

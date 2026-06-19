@@ -9,10 +9,13 @@ import {
   DASH_COOLDOWN,
   COMBAT,
   INTERACTION_QUOTES,
+  INTERACTION_QUOTES_EN,
   MIKU_CHAT_OPENING_LINES,
+  MIKU_CHAT_OPENING_LINES_EN,
   NPC_SPRITE_URLS,
   NPC_VARIANT_2_URLS,
   RANDOM_NPC_CHAT_LINES,
+  RANDOM_NPC_CHAT_LINES_EN,
   WALK_SPRITE_URLS,
   SCENE_IMAGES,
   IDLE_SPRITE_URLS,
@@ -35,6 +38,7 @@ import {
   NpcChatTarget,
 } from '../types';
 import { gameAudio } from '../utils/audioSystem';
+import { useI18n } from '../i18n';
 
 interface GameCanvasProps {
   gameState: GameState;
@@ -354,6 +358,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   touchInputRef,
   leaderboardScores,
 }) => {
+  const { t, locale } = useI18n();
+  const zh = locale === 'zh';
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isLoaded, setIsLoaded] = useState(false);
   const [dims, setDims] = useState(getViewportDims);
@@ -758,8 +764,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const kind = isMiku ? 'miku' : 'random';
     onNpcChatStart({
       kind,
-      speaker: isMiku ? '初音未来' : npc.label || '路人',
-      lines: [isMiku ? pickRandomLine(MIKU_CHAT_OPENING_LINES) : pickRandomLine(RANDOM_NPC_CHAT_LINES)],
+      speaker: isMiku ? t('npc.miku') : npc.label || t('npc.pedestrian'),
+      lines: [isMiku ? pickRandomLine(zh ? MIKU_CHAT_OPENING_LINES : MIKU_CHAT_OPENING_LINES_EN) : pickRandomLine(zh ? RANDOM_NPC_CHAT_LINES : RANDOM_NPC_CHAT_LINES_EN)],
       isInvite: isMiku,
       image: isMiku ? MIKU_NPC_IMAGE : undefined,
       anchor: getNpcChatAnchor(npc, kind),
@@ -770,8 +776,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const openPedestrianChat = (pedestrian: DecorativePedestrian) => {
     onNpcChatStart({
       kind: 'random',
-      speaker: '路人',
-      lines: [pickRandomLine(RANDOM_NPC_CHAT_LINES)],
+      speaker: t('npc.pedestrian'),
+      lines: [pickRandomLine(zh ? RANDOM_NPC_CHAT_LINES : RANDOM_NPC_CHAT_LINES_EN)],
       anchor: getNpcChatAnchor(pedestrian, 'random'),
       target: { type: 'pedestrian', id: pedestrian.id, kind: 'random' },
     });
@@ -810,16 +816,16 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const hasFreerideBonus = stats.taxiRides >= TAXI_FREERIDE_THRESHOLD;
     const score = Math.floor(stats.score + (hasFreerideBonus ? TAXI_FREERIDE_BONUS : 0));
     const title = hasFreerideBonus
-      ? '白嫖打车王'
+      ? t('title.freerideKing')
       : stats.bestCombo >= 28
-        ? '连击狂热'
+        ? t('title.comboFever')
         : stats.nearMisses >= 8
-          ? '擦边大师'
+          ? t('title.nearMissMaster')
           : getDistanceMeters(stats.distance) >= 180
-            ? '远距调查员'
+            ? t('title.longRange')
             : stats.evidence >= 6
-              ? '证据猎手'
-              : '见习调查员';
+              ? t('title.evidenceHunter')
+              : t('title.apprentice');
     const runSummary = {
       score,
       distance: getDistanceMeters(stats.distance),
@@ -849,7 +855,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     scanned: false,
     originalEmoji: '',
     scannedEmoji: '',
-    dialogText: INTERACTION_QUOTES,
+    dialogText: zh ? INTERACTION_QUOTES : INTERACTION_QUOTES_EN,
     isTarget: false,
     vx: 0.7,
     vy: 0,
@@ -861,7 +867,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     damageCooldown: 0,
     scanHits: 0,
     maxScanHits: 1,
-    label: '巡逻',
+    label: t('npc.patrol'),
     ...overrides,
   });
 
@@ -874,8 +880,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     visionRange: 0,
     visionHeight: 0,
     maxScanHits: 1,
-    label: '初音未来',
-    dialogText: MIKU_CHAT_OPENING_LINES,
+    label: t('npc.miku'),
+    dialogText: zh ? MIKU_CHAT_OPENING_LINES : MIKU_CHAT_OPENING_LINES_EN,
     chatKind: 'miku',
     spriteKey: 'decor_npc_v2_0',
   });
@@ -982,7 +988,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     obstaclesRef.current.push({ id: nextId(), x, y: VIRTUAL_GROUND_Y - 86, width, height: 28, type: 'LOW_BAR', damage, passed: false });
   };
 
-  const addPatrolNpc = (x: number, groundNpcY: number, startX: number, heat: number, label = '巡查') => {
+  const addPatrolNpc = (x: number, groundNpcY: number, startX: number, heat: number, label = t('npc.patrolDefault')) => {
     npcsRef.current.push(makeNpc(x, groundNpcY, {
       patrolStart: Math.max(startX + 40, x - 90),
       patrolEnd: Math.min(startX + CHUNK_LENGTH - 40, x + 150),
@@ -1003,7 +1009,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       height: hard ? 90 : 80,
       vx: (-0.55 - heat * 0.45) * (Math.random() < 0.5 ? 1 : -1),
       visionRange: hard ? 285 : 235,
-      label: hard ? '首领' : '目标',
+      label: hard ? t('npc.leader') : t('npc.target'),
     }));
   };
 
@@ -1086,7 +1092,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       weight: 1.05,
       danger: 1,
       build: (_index, startX, heat, groundNpcY) => {
-        addPatrolNpc(startX + 150, groundNpcY, startX, heat, '快巡');
+        addPatrolNpc(startX + 150, groundNpcY, startX, heat, t('npc.fastPatrol'));
         addPickup(startX + 350, GROUND_COIN_Y, Math.random() < 0.4 ? 'MAGNET' : 'FISH');
         addTargetNpc(startX + 520, groundNpcY, startX, heat, heat > 0.55);
       },
@@ -1125,7 +1131,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       weight: 1.05,
       danger: 2,
       build: (_index, startX, heat, groundNpcY) => {
-        addPatrolNpc(startX + 145, groundNpcY, startX, heat, '巡查');
+        addPatrolNpc(startX + 145, groundNpcY, startX, heat, t('npc.patrolDefault'));
         addLowBar(startX + 350, 104, 14);
         addTargetNpc(startX + 565, groundNpcY, startX, heat, heat > 0.65);
         addPickup(startX + 485, GROUND_COIN_Y, Math.random() < 0.45 ? 'MAGNET' : 'FISH');
@@ -1688,7 +1694,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           p.vx = ridingCar.cruiseVx;
           p.invulnerableTime = Math.max(p.invulnerableTime, 450);
           awardScore(620, 'TAXI RIDE', p.x, p.y - 20);
-          addFloatingText('下车', p.x + p.width / 2, p.y - 28, '#9ee6ff', 18);
+          addFloatingText(t('float.disembark'), p.x + p.width / 2, p.y - 28, '#9ee6ff', 18);
         }
       } else {
       if (!isTextInputActive && (keys['shift'] || touch.dash) && p.dashCooldown <= 0 && !p.isDashing) {
@@ -1776,7 +1782,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         p.isSliding = false;
         p.isDashing = false;
         stats.taxiRides++;
-        const taxiText = stats.taxiRides >= TAXI_FREERIDE_THRESHOLD ? '白嫖达成' : `搭上出租车 ${stats.taxiRides}/${TAXI_FREERIDE_THRESHOLD}`;
+        const taxiText = stats.taxiRides >= TAXI_FREERIDE_THRESHOLD ? t('float.freeRide') : t('float.boardTaxi', { n: stats.taxiRides, total: TAXI_FREERIDE_THRESHOLD });
         addFloatingText(taxiText, p.x + p.width / 2, p.y - 28, '#66f2c2', 18);
         playSound('COLLECT');
       }
@@ -2127,7 +2133,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           ctx.textAlign = 'center';
           ctx.font = 'bold 12px monospace';
           ctx.fillStyle = '#9ee6ff';
-          ctx.fillText('E 对话', ped.x + ped.width / 2, ped.y - 14 + Math.sin(now / 180) * 3);
+          ctx.fillText(t('npc.talkToPedestrian'), ped.x + ped.width / 2, ped.y - 14 + Math.sin(now / 180) * 3);
           ctx.restore();
         }
       });
@@ -2202,7 +2208,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           ctx.fillText('!', obstacle.x + obstacle.width / 2, obstacle.y + 21);
           ctx.fillStyle = '#fde047';
           ctx.font = 'bold 10px monospace';
-          ctx.fillText('危险', obstacle.x + obstacle.width / 2, obstacle.y - 8 + Math.sin(now / 180) * 2);
+          ctx.fillText(t('float.danger'), obstacle.x + obstacle.width / 2, obstacle.y - 8 + Math.sin(now / 180) * 2);
         }
       });
 
@@ -2229,11 +2235,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ctx.textAlign = 'center';
         ctx.font = 'bold 11px monospace';
         ctx.fillStyle = n.isTarget ? '#FFD700' : '#b6c5d6';
-        ctx.fillText(n.scanned ? '已猫化' : n.label, n.x + n.width / 2, n.y - 24);
+        ctx.fillText(n.scanned ? t('npc.scanned') : n.label, n.x + n.width / 2, n.y - 24);
         if (!n.scanned && n.chatKind === 'miku' && rectsOverlap(getPlayerHitbox(), getNpcTalkZone(n))) {
           ctx.fillStyle = '#67e8f9';
           ctx.font = 'bold 12px monospace';
-          ctx.fillText('想聊天', n.x + n.width / 2, n.y - 38 + Math.sin(now / 180) * 3);
+          ctx.fillText(t('float.wantsToChat'), n.x + n.width / 2, n.y - 38 + Math.sin(now / 180) * 3);
         }
         if (!n.scanned) {
           const pipStart = n.x + n.width / 2 - (n.maxScanHits * 9) / 2 + 4;
@@ -2347,7 +2353,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           ctx.textAlign = 'center';
           ctx.font = 'bold 13px monospace';
           ctx.fillStyle = '#66f2c2';
-          ctx.fillText('按 E/↓ 搭出租车', car.x + car.width / 2, car.y - 12 + Math.sin(now / 180) * 4);
+          ctx.fillText(t('float.boardTaxiPrompt'), car.x + car.width / 2, car.y - 12 + Math.sin(now / 180) * 4);
         }
         ctx.restore();
       });
@@ -2415,8 +2421,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         if (stats.score > 0 && rank < lastRankRef.current) {
           const surpassed = leaderboardScores[rank - 1];
           const nowMs = Date.now();
-          if (rank === 1) rankUpPromptRef.current = { text: '🏆 全球第一!', color: '#FFD700', until: nowMs + 4000 };
-          else if (surpassed) rankUpPromptRef.current = { text: `超过 ${surpassed.playerName} 成为第${rank}名!`, color: '#4cc9f0', until: nowMs + 2600 };
+          if (rank === 1) rankUpPromptRef.current = { text: t('rank.globalFirst'), color: '#FFD700', until: nowMs + 4000 };
+          else if (surpassed) rankUpPromptRef.current = { text: t('rank.surpassed', { name: surpassed.playerName, rank }), color: '#4cc9f0', until: nowMs + 2600 };
           lastRankRef.current = rank;
         }
         ctx.fillStyle = rank === 1 ? '#FFD700' : '#67e8f9';
@@ -2492,8 +2498,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ctx.lineWidth = 3;
         ctx.strokeStyle = 'rgba(15, 23, 42, 0.66)';
         ctx.fillStyle = 'rgba(236, 253, 245, 0.9)';
-        ctx.strokeText('按任意键开始游戏', promptX, promptY);
-        ctx.fillText('按任意键开始游戏', promptX, promptY);
+        ctx.strokeText(t('float.pressAnyKey'), promptX, promptY);
+        ctx.fillText(t('float.pressAnyKey'), promptX, promptY);
         ctx.restore();
       }
       ctx.restore();
@@ -2520,16 +2526,16 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       <div className="w-64 h-2 bg-slate-800 rounded-full overflow-hidden relative">
         <div className="h-full bg-cyan-500 shadow-[0_0_10px_#06b6d4]" style={{ animation: 'loadingProgress 2.4s ease-out forwards' }}></div>
       </div>
-      <div className="text-slate-500 font-mono text-xs animate-pulse">正在同步现实世界与猫星通讯...</div>
+      <div className="text-slate-500 font-mono text-xs animate-pulse">{t('loading.sync')}</div>
     </div>
   );
 
   if (isPortrait) return (
     <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-[#050510] text-center px-8 select-none [-webkit-tap-highlight-color:transparent]">
       <div className="text-6xl md:text-7xl mb-6 animate-pulse">📱</div>
-      <div className="text-cyan-300 font-mono text-xl md:text-2xl tracking-widest mb-3">请横屏游玩</div>
+      <div className="text-cyan-300 font-mono text-xl md:text-2xl tracking-widest mb-3">{t('portrait.rotate')}</div>
       <div className="text-slate-400 font-mono text-sm md:text-base">ROTATE YOUR DEVICE TO LANDSCAPE</div>
-      <div className="mt-8 text-slate-600 font-mono text-xs">Humans are Cats: Investigation 是横版游戏</div>
+      <div className="mt-8 text-slate-600 font-mono text-xs">{t('portrait.hint')}</div>
     </div>
   );
 
