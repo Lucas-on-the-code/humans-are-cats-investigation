@@ -1,0 +1,163 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  background:
+    radial-gradient(circle at 20% 18%, rgba(34, 211, 238, 0.16), transparent 26rem),
+    radial-gradient(circle at 80% 12%, rgba(244, 114, 182, 0.11), transparent 22rem),
+    #050510;
+  overflow: hidden;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+
+.pixel-font {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  letter-spacing: 0;
+}
+
+.main-menu-screen {
+  background:
+    linear-gradient(180deg, rgba(3, 7, 18, 0.22), rgba(3, 7, 18, 0.9) 68%, #030712 100%),
+    linear-gradient(90deg, rgba(3, 7, 18, 0.72), rgba(3, 7, 18, 0.16) 48%, rgba(3, 7, 18, 0.62)),
+    url('/scene/tree.png'),
+    url('/scene/house.png'),
+    url('/scene/sky.png');
+  background-position: center bottom, center, center bottom, center bottom, center;
+  background-size: cover, cover, auto 100%, auto 100%, cover;
+  background-repeat: no-repeat;
+}
+
+.main-menu-shell {
+  width: min(92vw, 760px);
+  background: #07111f;
+  border: 1px solid #1f6f86;
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.58), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+
+.main-menu-title {
+  color: #f8fafc;
+  text-shadow:
+    0 4px 0 #0e7490,
+    0 10px 28px rgba(8, 145, 178, 0.44);
+}
+
+.main-menu-button {
+  background: #facc15;
+  color: #111827;
+  border: 2px solid #111827;
+  box-shadow: 6px 6px 0 #0e7490, 0 18px 36px rgba(0, 0, 0, 0.34);
+  transition: transform 140ms ease, box-shadow 140ms ease, background-color 140ms ease;
+}
+
+.main-menu-button:hover {
+  background: #fde047;
+  transform: translate(-2px, -2px);
+  box-shadow: 8px 8px 0 #0e7490, 0 22px 42px rgba(0, 0, 0, 0.38);
+}
+
+.main-menu-button:active {
+  transform: translate(2px, 2px);
+  box-shadow: 2px 2px 0 #0e7490, 0 12px 28px rgba(0, 0, 0, 0.3);
+}
+
+.intro-terminal {
+  width: min(92vw, 640px);
+  background: #06130f;
+  border: 1px solid #22c55e;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.58), inset 0 0 0 1px rgba(187, 247, 208, 0.08);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: #111;
+  border-left: 1px solid #333;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #4f46e5;
+  border: 2px solid #111;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #6366f1;
+}
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.game-panel {
+  background: linear-gradient(180deg, rgba(8, 17, 38, 0.92), rgba(4, 10, 24, 0.94));
+  border: 1px solid rgba(103, 232, 249, 0.32);
+  box-shadow:
+    0 18px 60px rgba(0, 0, 0, 0.46),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.game-panel-strong {
+  background: linear-gradient(180deg, rgba(10, 24, 54, 0.96), rgba(3, 7, 18, 0.98));
+  border: 1px solid rgba(125, 211, 252, 0.44);
+  box-shadow:
+    0 24px 80px rgba(0, 0, 0, 0.58),
+    0 0 48px rgba(34, 211, 238, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.09);
+}
+
+.game-button {
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: linear-gradient(180deg, #0891b2, #0e7490);
+  color: white;
+  box-shadow: 0 14px 36px rgba(8, 145, 178, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  transition: transform 160ms ease, filter 160ms ease, box-shadow 160ms ease;
+}
+
+.game-button:hover {
+  filter: brightness(1.1);
+  transform: translateY(-1px);
+  box-shadow: 0 18px 44px rgba(8, 145, 178, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.26);
+}
+
+.game-button:active {
+  transform: translateY(1px) scale(0.98);
+}
+
+.game-button-secondary {
+  border: 1px solid rgba(148, 163, 184, 0.34);
+  background: rgba(15, 23, 42, 0.72);
+  color: #e2e8f0;
+  transition: background-color 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+
+.game-button-secondary:hover {
+  background: rgba(30, 41, 59, 0.86);
+  border-color: rgba(103, 232, 249, 0.44);
+}
+
+.game-input {
+  background: rgba(2, 6, 23, 0.72);
+  border: 1px solid rgba(148, 163, 184, 0.38);
+  color: #f8fafc;
+  outline: none;
+}
+
+.game-input:focus {
+  border-color: rgba(103, 232, 249, 0.82);
+  box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.14);
+}
+
+.touch-control-button {
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.76), rgba(15, 23, 42, 0.52));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 16px 34px rgba(0, 0, 0, 0.28);
+}
+
+.touch-control-button:active {
+  background: linear-gradient(180deg, rgba(34, 211, 238, 0.78), rgba(14, 116, 144, 0.72));
+  transform: scale(0.94);
+}

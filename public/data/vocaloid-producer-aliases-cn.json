@@ -1,0 +1,1278 @@
+{
+  "version": 1,
+  "generatedAt": "2026-05-25T18:46:42.852Z",
+  "sourceNote": "Chinese fandom aliases for producers appearing in public/data/biliboard-hot-songs.json. Strong aliases are used for local lookup; weakAliases keep joke/deleted/black-screen aliases out of automatic triggers.",
+  "producerCount": 262,
+  "matchedProducerCount": 67,
+  "entries": {
+    "DECO*27": {
+      "canonicalName": "DECO*27",
+      "producerNames": [
+        "DECO*27"
+      ],
+      "aliases": [
+        "DECO",
+        "火锅P",
+        "爹扣",
+        "烤鸭P"
+      ],
+      "weakAliases": [
+        "德克士",
+        "周冬雨P",
+        "移情别恋P",
+        "阿里嘎多P"
+      ],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "DECO*27",
+          "url": "https://moegirl.uk/DECO*27"
+        }
+      ],
+      "songCount": 23
+    },
+    "ピノキオピー": {
+      "canonicalName": "ピノキオピー",
+      "producerNames": [
+        "ピノキオピー",
+        "匹诺曹P"
+      ],
+      "aliases": [
+        "匹诺曹P",
+        "匹老板",
+        "老匹",
+        "小红帽p",
+        "工藤大発見"
+      ],
+      "weakAliases": [
+        "汪峰P"
+      ],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "匹诺曹P",
+          "url": "https://moegirl.uk/%E5%8C%B9%E8%AF%BA%E6%9B%B9P"
+        }
+      ],
+      "songCount": 22
+    },
+    "Nayutan星人": {
+      "canonicalName": "ナユタン星人",
+      "producerNames": [
+        "ナユタン星人",
+        "Nayutan星人"
+      ],
+      "aliases": [
+        "外星人P",
+        "外星人p",
+        "奶油糖星人",
+        "那由他星人",
+        "外星人"
+      ],
+      "weakAliases": [
+        "外星人毒泉",
+        "周刊流氓",
+        "突然熟悉p"
+      ],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "Nayutan星人",
+          "url": "https://moegirl.uk/Nayutan%E6%98%9F%E4%BA%BA"
+        }
+      ],
+      "songCount": 16
+    },
+    "r-906": {
+      "canonicalName": "r-906",
+      "producerNames": [
+        "r-906"
+      ],
+      "aliases": [],
+      "weakAliases": [],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "R-906",
+          "url": "https://moegirl.uk/R-906"
+        }
+      ],
+      "songCount": 15
+    },
+    "Chinozo": {
+      "canonicalName": "Chinozo",
+      "producerNames": [
+        "Chinozo"
+      ],
+      "aliases": [],
+      "weakAliases": [],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "Chinozo",
+          "url": "https://moegirl.uk/Chinozo"
+        }
+      ],
+      "songCount": 14
+    },
+    "Iyowa": {
+      "canonicalName": "いよわ",
+      "producerNames": [
+        "いよわ",
+        "Iyowa"
+      ],
+      "aliases": [
+        "胃弱"
+      ],
+      "weakAliases": [],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "Iyowa",
+          "url": "https://moegirl.uk/Iyowa"
+        }
+      ],
+      "songCount": 12
+    },
+    "Masarada": {
+      "canonicalName": "マサラダ",
+      "producerNames": [
+        "マサラダ",
+        "Masarada"
+      ],
+      "aliases": [
+        "玛莎拉蒂P",
+        "玛莎拉蒂p",
+        "玛莎拉蒂",
+        "玛莎拉达",
+        "马萨拉达"
+      ],
+      "weakAliases": [],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "Masarada",
+          "url": "https://moegirl.uk/Masarada"
+        }
+      ],
+      "songCount": 12
+    },
+    "Mitchie M": {
+      "canonicalName": "Mitchie M",
+      "producerNames": [
+        "Mitchie M",
+        "MitchieM"
+      ],
+      "aliases": [
+        "登山P",
+        "Tucada",
+        "Mitchiell Mitchie"
+      ],
+      "weakAliases": [
+        "MMP",
+        "买买P"
+      ],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "Mitchie M",
+          "url": "https://moegirl.uk/Mitchie%20M"
+        }
+      ],
+      "songCount": 10
+    },
+    "煮ル果実": {
+      "canonicalName": "煮ル果実",
+      "producerNames": [
+        "煮ル果実"
+      ],
+      "aliases": [
+        "煮果",
+        "煮熟的果实"
+      ],
+      "weakAliases": [],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "Niru Kajitsu",
+          "url": "https://moegirl.uk/Niru%20Kajitsu"
+        }
+      ],
+      "songCount": 10
+    },
+    "MIMI": {
+      "canonicalName": "MIMI",
+      "producerNames": [
+        "MIMI"
+      ],
+      "aliases": [],
+      "weakAliases": [],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "MIMI",
+          "url": "https://moegirl.uk/MIMI"
+        }
+      ],
+      "songCount": 9
+    },
+    "雄之助": {
+      "canonicalName": "雄之助",
+      "producerNames": [
+        "雄之助"
+      ],
+      "aliases": [
+        "Yunosuke",
+        "雄大"
+      ],
+      "weakAliases": [],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "雄之助",
+          "url": "https://moegirl.uk/%E9%9B%84%E4%B9%8B%E5%8A%A9"
+        }
+      ],
+      "songCount": 9
+    },
+    "Giga": {
+      "canonicalName": "ギガ",
+      "producerNames": [
+        "Giga",
+        "ギガ"
+      ],
+      "aliases": [
+        "ギガP",
+        "gigaP"
+      ],
+      "weakAliases": [
+        "正业之敌P",
+        "gigay"
+      ],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "GigaP",
+          "url": "https://moegirl.uk/GigaP"
+        }
+      ],
+      "songCount": 8
+    },
+    "Shannon": {
+      "canonicalName": "シャノン",
+      "producerNames": [
+        "シャノン",
+        "Shannon"
+      ],
+      "aliases": [],
+      "weakAliases": [],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "Shannon",
+          "url": "https://moegirl.uk/Shannon"
+        }
+      ],
+      "songCount": 8
+    },
+    "春卷饭": {
+      "canonicalName": "はるまきごはん",
+      "producerNames": [
+        "春卷饭",
+        "はるまきごはん"
+      ],
+      "aliases": [
+        "HARUMAKI GOHAN",
+        "春捲饭"
+      ],
+      "weakAliases": [],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "春卷饭",
+          "url": "https://moegirl.uk/%E6%98%A5%E5%8D%B7%E9%A5%AD"
+        }
+      ],
+      "songCount": 7
+    },
+    "Adeliae": {
+      "canonicalName": "Adeliae",
+      "producerNames": [
+        "アデリー",
+        "Adeliae"
+      ],
+      "aliases": [
+        "アデリー"
+      ],
+      "weakAliases": [],
+      "sourcePages": [],
+      "songCount": 6
+    },
+    "Kikuo": {
+      "canonicalName": "きくお",
+      "producerNames": [
+        "きくお",
+        "Kikuo",
+        "き く お"
+      ],
+      "aliases": [
+        "き く お"
+      ],
+      "weakAliases": [
+        "教主"
+      ],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "Kikuo",
+          "url": "https://moegirl.uk/Kikuo"
+        }
+      ],
+      "songCount": 5
+    },
+    "宮守文学": {
+      "canonicalName": "宮守文学",
+      "producerNames": [
+        "宫守文学",
+        "宮守文学"
+      ],
+      "aliases": [
+        "宫守文学"
+      ],
+      "weakAliases": [],
+      "sourcePages": [],
+      "songCount": 5
+    },
+    "d0tc0mmie": {
+      "canonicalName": "d0tc0mmie",
+      "producerNames": [
+        "d0tc0mmie"
+      ],
+      "aliases": [
+        "点点P",
+        "点点p"
+      ],
+      "weakAliases": [],
+      "sourcePages": [],
+      "songCount": 4
+    },
+    "MARETU": {
+      "canonicalName": "MARETU",
+      "producerNames": [
+        "MARETU"
+      ],
+      "aliases": [
+        "まれつ",
+        "極悪P",
+        "马 土",
+        "土哥",
+        "土土",
+        "术力口鲁迅",
+        "热土"
+      ],
+      "weakAliases": [
+        "堕胎P",
+        "猫"
+      ],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "MARETU",
+          "url": "https://moegirl.uk/MARETU"
+        }
+      ],
+      "songCount": 4
+    },
+    "南ノ南": {
+      "canonicalName": "南ノ南",
+      "producerNames": [
+        "南ノ南"
+      ],
+      "aliases": [
+        "南撇南",
+        "せかせかP",
+        "南之南"
+      ],
+      "weakAliases": [],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "南之南",
+          "url": "https://moegirl.uk/%E5%8D%97%E4%B9%8B%E5%8D%97"
+        }
+      ],
+      "songCount": 4
+    },
+    "晴いちばん": {
+      "canonicalName": "晴いちばん",
+      "producerNames": [
+        "晴一番",
+        "晴いちばん"
+      ],
+      "aliases": [
+        "晴一番"
+      ],
+      "weakAliases": [],
+      "sourcePages": [],
+      "songCount": 4
+    },
+    "柊マグネタイト": {
+      "canonicalName": "柊マグネタイト",
+      "producerNames": [
+        "柊マグネタイト"
+      ],
+      "aliases": [
+        "柊磁铁",
+        "柊マ",
+        "柊magnetite"
+      ],
+      "weakAliases": [],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "柊magnetite",
+          "url": "https://moegirl.uk/%E6%9F%8Amagnetite"
+        }
+      ],
+      "songCount": 4
+    },
+    "郁P": {
+      "canonicalName": "鬱P/Utsu-P<br/>郁P",
+      "producerNames": [
+        "鬱P",
+        "郁P"
+      ],
+      "aliases": [
+        "鬱P"
+      ],
+      "weakAliases": [],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "郁P",
+          "url": "https://moegirl.uk/%E9%83%81P"
+        }
+      ],
+      "songCount": 4
+    },
+    "黒うさぎ": {
+      "canonicalName": "黒うさぎ",
+      "producerNames": [
+        "黒うさぎ",
+        "黒うさP"
+      ],
+      "aliases": [
+        "黒うさP",
+        "黑兔P"
+      ],
+      "weakAliases": [],
+      "sourcePages": [],
+      "songCount": 4
+    },
+    "Pepoyo": {
+      "canonicalName": "ぺぽよ",
+      "producerNames": [
+        "ペぽよ",
+        "ぺぽよ",
+        "Pepoyo"
+      ],
+      "aliases": [
+        "ペぽよ",
+        "枇杷油",
+        "油姐",
+        "ppy"
+      ],
+      "weakAliases": [
+        "Pepornhub",
+        "一体机"
+      ],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "Pepoyo",
+          "url": "https://moegirl.uk/Pepoyo"
+        }
+      ],
+      "songCount": 3
+    },
+    "Picon": {
+      "canonicalName": "Picon",
+      "producerNames": [
+        "ピコン",
+        "Picon",
+        "Picon_ピコン"
+      ],
+      "aliases": [
+        "ピコン",
+        "Picon_ピコン"
+      ],
+      "weakAliases": [],
+      "sourcePages": [],
+      "songCount": 3
+    },
+    "すりぃ": {
+      "canonicalName": "すりぃ",
+      "producerNames": [
+        "すりぃ"
+      ],
+      "aliases": [
+        "三哥"
+      ],
+      "weakAliases": [
+        "60sp"
+      ],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "Surii",
+          "url": "https://moegirl.uk/Surii"
+        }
+      ],
+      "songCount": 3
+    },
+    "和未來一起喝茶": {
+      "canonicalName": "和未來一起喝茶",
+      "producerNames": [
+        "和未來一起喝茶"
+      ],
+      "aliases": [
+        "喝茶P",
+        "和未来一起喝茶"
+      ],
+      "weakAliases": [],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "和未来一起喝茶",
+          "url": "https://moegirl.uk/%E5%92%8C%E6%9C%AA%E6%9D%A5%E4%B8%80%E8%B5%B7%E5%96%9D%E8%8C%B6"
+        }
+      ],
+      "songCount": 3
+    },
+    "香椎モイミ": {
+      "canonicalName": "香椎モイミ",
+      "producerNames": [
+        "香椎モイミ"
+      ],
+      "aliases": [],
+      "weakAliases": [],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "Kashii Moimi",
+          "url": "https://moegirl.uk/Kashii%20Moimi"
+        }
+      ],
+      "songCount": 3
+    },
+    "40mP": {
+      "canonicalName": "40mP / イナメトオル",
+      "producerNames": [
+        "40mP"
+      ],
+      "aliases": [
+        "40大爷",
+        "ピアニカP"
+      ],
+      "weakAliases": [],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "40mP",
+          "url": "https://moegirl.uk/40mP"
+        }
+      ],
+      "songCount": 2
+    },
+    "appy": {
+      "canonicalName": "appy",
+      "producerNames": [
+        "appy",
+        "appy_7"
+      ],
+      "aliases": [
+        "appy_7",
+        "appy_h_happy"
+      ],
+      "weakAliases": [],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "Appy",
+          "url": "https://moegirl.uk/Appy"
+        }
+      ],
+      "songCount": 2
+    },
+    "Azari": {
+      "canonicalName": "Azari",
+      "producerNames": [
+        "Azari"
+      ],
+      "aliases": [
+        "xxxazari"
+      ],
+      "weakAliases": [],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "Azari",
+          "url": "https://moegirl.uk/Azari"
+        }
+      ],
+      "songCount": 2
+    },
+    "cosMo@暴走P": {
+      "canonicalName": "cosMo@暴走P",
+      "producerNames": [
+        "cosMo@暴走P"
+      ],
+      "aliases": [
+        "暴走P"
+      ],
+      "weakAliases": [],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "暴走P",
+          "url": "https://moegirl.uk/%E6%9A%B4%E8%B5%B0P"
+        }
+      ],
+      "songCount": 2
+    },
+    "John": {
+      "canonicalName": "john",
+      "producerNames": [
+        "John"
+      ],
+      "aliases": [
+        "TOOBOE",
+        "john爹",
+        "约翰P",
+        "John(VOCALOID职人)"
+      ],
+      "weakAliases": [
+        "狗",
+        "手机铃声大师"
+      ],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "John(VOCALOID职人)",
+          "url": "https://moegirl.uk/John(VOCALOID%E8%81%8C%E4%BA%BA)"
+        }
+      ],
+      "songCount": 2
+    },
+    "JUSF周存": {
+      "canonicalName": "JUSF周存",
+      "producerNames": [
+        "JUSF周存"
+      ],
+      "aliases": [
+        "存娘",
+        "殿堂存"
+      ],
+      "weakAliases": [
+        "家媳妇周存",
+        "贾思福",
+        "JUST轴存"
+      ],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "JUSF周存",
+          "url": "https://moegirl.uk/JUSF%E5%91%A8%E5%AD%98"
+        }
+      ],
+      "songCount": 2
+    },
+    "Kanaria": {
+      "canonicalName": "Kanaria",
+      "producerNames": [
+        "Kanaria"
+      ],
+      "aliases": [
+        "金丝雀P",
+        "烤牛肉P"
+      ],
+      "weakAliases": [],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "Kanaria",
+          "url": "https://moegirl.uk/Kanaria"
+        }
+      ],
+      "songCount": 2
+    },
+    "Kon2008": {
+      "canonicalName": "Kon2008",
+      "producerNames": [
+        "Kon2008",
+        "Kon2008_29"
+      ],
+      "aliases": [
+        "Kon2008_29"
+      ],
+      "weakAliases": [],
+      "sourcePages": [],
+      "songCount": 2
+    },
+    "marasy_触手猴": {
+      "canonicalName": "marasy_触手猴",
+      "producerNames": [
+        "marasy_触手猴"
+      ],
+      "aliases": [
+        "marasy",
+        "触手猴"
+      ],
+      "weakAliases": [],
+      "sourcePages": [],
+      "songCount": 2
+    },
+    "minato": {
+      "canonicalName": "minato、流星P、トゥライ",
+      "producerNames": [
+        "minato",
+        "minato(流星P)"
+      ],
+      "aliases": [
+        "minato(流星P)",
+        "流星P"
+      ],
+      "weakAliases": [],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "流星P",
+          "url": "https://moegirl.uk/%E6%B5%81%E6%98%9FP"
+        }
+      ],
+      "songCount": 2
+    },
+    "R Sound Design": {
+      "canonicalName": "R Sound Design",
+      "producerNames": [
+        "R Sound Design"
+      ],
+      "aliases": [
+        "R",
+        "RSD"
+      ],
+      "weakAliases": [],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "R Sound Design",
+          "url": "https://moegirl.uk/R%20Sound%20Design"
+        }
+      ],
+      "songCount": 2
+    },
+    "Toa": {
+      "canonicalName": "とあ",
+      "producerNames": [
+        "Toa"
+      ],
+      "aliases": [],
+      "weakAliases": [],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "Toa",
+          "url": "https://moegirl.uk/Toa"
+        }
+      ],
+      "songCount": 2
+    },
+    "YurryCanon": {
+      "canonicalName": "ユリイ・カノン",
+      "producerNames": [
+        "YurryCanon"
+      ],
+      "aliases": [
+        "尤里卡农",
+        "卡农",
+        "跳舞p",
+        "心脏p",
+        "百合盛典"
+      ],
+      "weakAliases": [],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "YurryCanon",
+          "url": "https://moegirl.uk/YurryCanon"
+        }
+      ],
+      "songCount": 2
+    },
+    "かいりきベア": {
+      "canonicalName": "かいりきベア",
+      "producerNames": [
+        "かいりきベア"
+      ],
+      "aliases": [
+        "怪力熊",
+        "熊熊",
+        "kairiki bear"
+      ],
+      "weakAliases": [
+        "暴力熊和机械熊纯属翻译错误"
+      ],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "怪力熊",
+          "url": "https://moegirl.uk/%E6%80%AA%E5%8A%9B%E7%86%8A"
+        }
+      ],
+      "songCount": 2
+    },
+    "カノン": {
+      "canonicalName": "ユリイ・カノン",
+      "producerNames": [
+        "カノン"
+      ],
+      "aliases": [
+        "尤里卡农",
+        "卡农",
+        "跳舞p",
+        "心脏p",
+        "百合盛典"
+      ],
+      "weakAliases": [],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "YurryCanon",
+          "url": "https://moegirl.uk/YurryCanon"
+        }
+      ],
+      "songCount": 2
+    },
+    "とあ": {
+      "canonicalName": "とあ",
+      "producerNames": [
+        "とあ"
+      ],
+      "aliases": [],
+      "weakAliases": [],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "Toa",
+          "url": "https://moegirl.uk/Toa"
+        }
+      ],
+      "songCount": 2
+    },
+    "みつあくま(门铃P)": {
+      "canonicalName": "みつあくま(门铃P)",
+      "producerNames": [
+        "みつあくま(门铃p)",
+        "みつあくま(门铃P)"
+      ],
+      "aliases": [
+        "门铃P",
+        "门铃p"
+      ],
+      "weakAliases": [],
+      "sourcePages": [],
+      "songCount": 2
+    },
+    "ユギカ": {
+      "canonicalName": "ユギカ",
+      "producerNames": [
+        "ユギカ",
+        "ユギカYugica"
+      ],
+      "aliases": [
+        "ユギカYugica"
+      ],
+      "weakAliases": [],
+      "sourcePages": [],
+      "songCount": 2
+    },
+    "ユリイ": {
+      "canonicalName": "ユリイ・カノン",
+      "producerNames": [
+        "ユリイ"
+      ],
+      "aliases": [
+        "尤里卡农",
+        "卡农",
+        "跳舞p",
+        "心脏p",
+        "百合盛典"
+      ],
+      "weakAliases": [],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "YurryCanon",
+          "url": "https://moegirl.uk/YurryCanon"
+        }
+      ],
+      "songCount": 2
+    },
+    "羽生迷子": {
+      "canonicalName": "羽生迷子",
+      "producerNames": [
+        "羽生迷子"
+      ],
+      "aliases": [
+        "酩酊P"
+      ],
+      "weakAliases": [
+        "莪P"
+      ],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "羽生迷子",
+          "url": "https://moegirl.uk/%E7%BE%BD%E7%94%9F%E8%BF%B7%E5%AD%90"
+        }
+      ],
+      "songCount": 2
+    },
+    "読谷あかね": {
+      "canonicalName": "読谷あかね",
+      "producerNames": [
+        "読谷あかね"
+      ],
+      "aliases": [],
+      "weakAliases": [],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "Yomitan Akane",
+          "url": "https://moegirl.uk/Yomitan%20Akane"
+        }
+      ],
+      "songCount": 2
+    },
+    "Aqu3ra": {
+      "canonicalName": "Aqu3ra",
+      "producerNames": [
+        "Aqu3ra"
+      ],
+      "aliases": [
+        "アクエラ",
+        "水哥"
+      ],
+      "weakAliases": [],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "Aqu3ra",
+          "url": "https://moegirl.uk/Aqu3ra"
+        }
+      ],
+      "songCount": 1
+    },
+    "ATOLS": {
+      "canonicalName": "ATOLS",
+      "producerNames": [
+        "ATOLS"
+      ],
+      "aliases": [
+        "A神"
+      ],
+      "weakAliases": [],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "ATOLS",
+          "url": "https://moegirl.uk/ATOLS"
+        }
+      ],
+      "songCount": 1
+    },
+    "Jin": {
+      "canonicalName": "Jin",
+      "producerNames": [
+        "Jin"
+      ],
+      "aliases": [
+        "自然の敵P",
+        "Jin(作曲家)"
+      ],
+      "weakAliases": [
+        "掐脖子狂魔"
+      ],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "Jin(作曲家)",
+          "url": "https://moegirl.uk/Jin(%E4%BD%9C%E6%9B%B2%E5%AE%B6)"
+        }
+      ],
+      "songCount": 1
+    },
+    "KIRA": {
+      "canonicalName": "KIRA",
+      "producerNames": [
+        "KIRA"
+      ],
+      "aliases": [
+        "YusukeKira",
+        "KIRA(P主)"
+      ],
+      "weakAliases": [
+        "小黃雞"
+      ],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "KIRA(P主)",
+          "url": "https://moegirl.uk/KIRA(P%E4%B8%BB)"
+        }
+      ],
+      "songCount": 1
+    },
+    "Kz": {
+      "canonicalName": "kz(livetune)",
+      "producerNames": [
+        "Kz"
+      ],
+      "aliases": [
+        "RE:NDZ"
+      ],
+      "weakAliases": [
+        "坚持导也"
+      ],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "Kz",
+          "url": "https://moegirl.uk/Kz"
+        }
+      ],
+      "songCount": 1
+    },
+    "Niki": {
+      "canonicalName": "niki",
+      "producerNames": [
+        "Niki"
+      ],
+      "aliases": [],
+      "weakAliases": [],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "Niki",
+          "url": "https://moegirl.uk/Niki"
+        }
+      ],
+      "songCount": 1
+    },
+    "Nulut": {
+      "canonicalName": "ぬゆり<br>Lanndo",
+      "producerNames": [
+        "Nulut"
+      ],
+      "aliases": [],
+      "weakAliases": [],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "Nulut",
+          "url": "https://moegirl.uk/Nulut"
+        }
+      ],
+      "songCount": 1
+    },
+    "wowaka": {
+      "canonicalName": "wowaka",
+      "producerNames": [
+        "wowaka"
+      ],
+      "aliases": [
+        "現実逃避P",
+        "wwk",
+        "おか〇〇"
+      ],
+      "weakAliases": [
+        "老wo",
+        "老wa"
+      ],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "Wowaka",
+          "url": "https://moegirl.uk/Wowaka"
+        }
+      ],
+      "songCount": 1
+    },
+    "ツミキ": {
+      "canonicalName": "ツミキ<br>积木P",
+      "producerNames": [
+        "ツミキ"
+      ],
+      "aliases": [
+        "23ki",
+        "罪木",
+        "积木P"
+      ],
+      "weakAliases": [],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "积木P",
+          "url": "https://moegirl.uk/%E7%A7%AF%E6%9C%A8P"
+        }
+      ],
+      "songCount": 1
+    },
+    "てにをは": {
+      "canonicalName": "てにをは",
+      "producerNames": [
+        "てにをは"
+      ],
+      "aliases": [
+        "Teniwoha",
+        "助词P"
+      ],
+      "weakAliases": [],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "Teniwoha",
+          "url": "https://moegirl.uk/Teniwoha"
+        }
+      ],
+      "songCount": 1
+    },
+    "ぬゆり": {
+      "canonicalName": "ぬゆり<br>Lanndo",
+      "producerNames": [
+        "ぬゆり"
+      ],
+      "aliases": [],
+      "weakAliases": [],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "Nulut",
+          "url": "https://moegirl.uk/Nulut"
+        }
+      ],
+      "songCount": 1
+    },
+    "れるりり": {
+      "canonicalName": "れるりり<br>rerulili<br>当社比P",
+      "producerNames": [
+        "れるりり"
+      ],
+      "aliases": [
+        "莉莉",
+        "Kitty",
+        "当社比P"
+      ],
+      "weakAliases": [
+        "来撸"
+      ],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "当社比P",
+          "url": "https://moegirl.uk/%E5%BD%93%E7%A4%BE%E6%AF%94P"
+        }
+      ],
+      "songCount": 1
+    },
+    "八王子P": {
+      "canonicalName": "八王子P",
+      "producerNames": [
+        "八王子P"
+      ],
+      "aliases": [
+        "8#Prince"
+      ],
+      "weakAliases": [],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "八王子P",
+          "url": "https://moegirl.uk/%E5%85%AB%E7%8E%8B%E5%AD%90P"
+        }
+      ],
+      "songCount": 1
+    },
+    "夏代孝明": {
+      "canonicalName": "夏代孝明",
+      "producerNames": [
+        "夏代孝明"
+      ],
+      "aliases": [],
+      "weakAliases": [],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "夏代孝明",
+          "url": "https://moegirl.uk/%E5%A4%8F%E4%BB%A3%E5%AD%9D%E6%98%8E"
+        }
+      ],
+      "songCount": 1
+    },
+    "椎乃味醂": {
+      "canonicalName": "椎乃味醂",
+      "producerNames": [
+        "椎乃味醂"
+      ],
+      "aliases": [
+        "konaka",
+        "椎乃"
+      ],
+      "weakAliases": [],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "椎乃味醂",
+          "url": "https://moegirl.uk/%E6%A4%8E%E4%B9%83%E5%91%B3%E9%86%82"
+        }
+      ],
+      "songCount": 1
+    },
+    "歩く人": {
+      "canonicalName": "歩く人",
+      "producerNames": [
+        "歩く人"
+      ],
+      "aliases": [
+        "PedestrianP"
+      ],
+      "weakAliases": [],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "PedestrianP",
+          "url": "https://moegirl.uk/PedestrianP"
+        }
+      ],
+      "songCount": 1
+    },
+    "遼遼": {
+      "canonicalName": "遼遼",
+      "producerNames": [
+        "遼遼"
+      ],
+      "aliases": [
+        "辽辽"
+      ],
+      "weakAliases": [],
+      "sourcePages": [
+        {
+          "site": "萌娘百科",
+          "title": "辽辽",
+          "url": "https://moegirl.uk/%E8%BE%BD%E8%BE%BD"
+        }
+      ],
+      "songCount": 1
+    }
+  }
+}
