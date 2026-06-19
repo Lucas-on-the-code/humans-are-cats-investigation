@@ -400,7 +400,7 @@ export const handleAuthRequest = async (req, res) => {
     }
 
     if (path === '/register' && req.method === 'POST') {
-      if (hitRateLimit(`register:${ipHash}`, 5, 60 * 60 * 1000)) return writeJson(res, 429, { error: 'REGISTER_RATE_LIMITED' });
+      if (hitRateLimit(`register:${ipHash}`, 30, 60 * 60 * 1000)) return writeJson(res, 429, { error: 'REGISTER_RATE_LIMITED' }); // 30/hour (was 5) — relaxed
       const body = await readJsonBody(req);
       const username = sanitizeUsername(body.username);
       const password = String(body.password || '');
