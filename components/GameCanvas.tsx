@@ -40,6 +40,10 @@ import {
 import { gameAudio } from '../utils/audioSystem';
 import { useI18n } from '../i18n';
 
+const FONT_STACK = (typeof window !== 'undefined' && typeof document !== 'undefined'
+  && getComputedStyle(document.documentElement).getPropertyValue('--font-mono').trim())
+  || '"Space Mono", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", monospace';
+
 interface GameCanvasProps {
   gameState: GameState;
   setGameState: (state: GameState) => void;
@@ -2131,7 +2135,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         if (rectsOverlap(getPlayerHitbox(), getNpcTalkZone(ped))) {
           ctx.save();
           ctx.textAlign = 'center';
-          ctx.font = 'bold 12px monospace';
+          ctx.font = `bold 12px ${FONT_STACK}`;
           ctx.fillStyle = '#9ee6ff';
           ctx.fillText(t('npc.talkToPedestrian'), ped.x + ped.width / 2, ped.y - 14 + Math.sin(now / 180) * 3);
           ctx.restore();
@@ -2203,11 +2207,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           ctx.fillStyle = 'rgba(255,255,255,0.55)';
           ctx.fillRect(obstacle.x + 8, obstacle.y + 7, obstacle.width - 16, 3);
           ctx.fillStyle = '#fff7ed';
-          ctx.font = 'bold 18px monospace';
+          ctx.font = `bold 18px ${FONT_STACK}`;
           ctx.textAlign = 'center';
           ctx.fillText('!', obstacle.x + obstacle.width / 2, obstacle.y + 21);
           ctx.fillStyle = '#fde047';
-          ctx.font = 'bold 10px monospace';
+          ctx.font = `bold 10px ${FONT_STACK}`;
           ctx.fillText(t('float.danger'), obstacle.x + obstacle.width / 2, obstacle.y - 8 + Math.sin(now / 180) * 2);
         }
       });
@@ -2233,12 +2237,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         drawPlaceholderNpc(n, now);
         ctx.save();
         ctx.textAlign = 'center';
-        ctx.font = 'bold 11px monospace';
+        ctx.font = `bold 11px ${FONT_STACK}`;
         ctx.fillStyle = n.isTarget ? '#FFD700' : '#b6c5d6';
         ctx.fillText(n.scanned ? t('npc.scanned') : n.label, n.x + n.width / 2, n.y - 24);
         if (!n.scanned && n.chatKind === 'miku' && rectsOverlap(getPlayerHitbox(), getNpcTalkZone(n))) {
           ctx.fillStyle = '#67e8f9';
-          ctx.font = 'bold 12px monospace';
+          ctx.font = `bold 12px ${FONT_STACK}`;
           ctx.fillText(t('float.wantsToChat'), n.x + n.width / 2, n.y - 38 + Math.sin(now / 180) * 3);
         }
         if (!n.scanned) {
@@ -2264,7 +2268,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ctx.textAlign = 'left';
         const label = it.type === 'HEALTH' ? '+' : it.type === 'MAGNET' ? 'M' : it.type === 'SHIELD' ? 'S' : it.type === 'EVIDENCE' ? 'D' : '•';
         ctx.fillStyle = it.type === 'HEALTH' ? '#00cc88' : it.type === 'MAGNET' ? '#9ee6ff' : it.type === 'SHIELD' ? '#66f2c2' : it.type === 'EVIDENCE' ? COLORS.evidence : '#ffe066';
-        ctx.font = 'bold 24px monospace';
+        ctx.font = `bold 24px ${FONT_STACK}`;
         ctx.beginPath();
         ctx.arc(it.x + 15, it.y + 15 + it.floatOffset, 15, 0, Math.PI * 2);
         ctx.fill();
@@ -2351,7 +2355,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
         if (canEnter) {
           ctx.textAlign = 'center';
-          ctx.font = 'bold 13px monospace';
+          ctx.font = `bold 13px ${FONT_STACK}`;
           ctx.fillStyle = '#66f2c2';
           ctx.fillText(t('float.boardTaxiPrompt'), car.x + car.width / 2, car.y - 12 + Math.sin(now / 180) * 4);
         }
@@ -2379,7 +2383,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       floatingTextsRef.current.forEach((ft) => {
         if (ft.x < viewLeft || ft.x > viewRight) return;
         ctx.globalAlpha = Math.max(0, Math.min(1, ft.life / 30));
-        ctx.font = `bold ${ft.size}px monospace`;
+        ctx.font = `bold ${ft.size}px ${FONT_STACK}`;
         ctx.textAlign = 'center';
         ctx.fillStyle = ft.color;
         ctx.fillText(ft.text, ft.x, ft.y);
@@ -2426,7 +2430,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           lastRankRef.current = rank;
         }
         ctx.fillStyle = rank === 1 ? '#FFD700' : '#67e8f9';
-        ctx.font = 'bold 13px monospace';
+        ctx.font = `bold 13px ${FONT_STACK}`;
         ctx.textAlign = 'left';
         ctx.fillText(rank === 1 ? 'RANK 🏆1' : `RANK ${rank}`, 244, 62);
       }
@@ -2441,7 +2445,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ctx.translate(virtualWidth / 2, 92);
         ctx.scale(pulse, pulse);
         ctx.textAlign = 'center';
-        ctx.font = 'bold 28px monospace';
+        ctx.font = `bold 28px ${FONT_STACK}`;
         ctx.fillStyle = rankPrompt.color;
         ctx.shadowColor = rankPrompt.color;
         ctx.shadowBlur = 18;
@@ -2449,10 +2453,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ctx.restore();
       }
       ctx.fillStyle = '#FFD700';
-      ctx.font = 'bold 28px monospace';
+      ctx.font = `bold 28px ${FONT_STACK}`;
       ctx.fillText(`${Math.floor(stats.score).toLocaleString()}`, 44, 62);
       ctx.fillStyle = '#dbeafe';
-      ctx.font = 'bold 12px monospace';
+      ctx.font = `bold 12px ${FONT_STACK}`;
       ctx.fillText(`DIST ${getDistanceMeters(stats.distance)}m`, 44, 86);
       ctx.fillText(`DATA ${stats.evidence}`, 164, 86);
       ctx.fillText(`NEAR ${stats.nearMisses}`, 254, 86);
@@ -2468,11 +2472,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       ctx.fillStyle = '#ffb703';
       ctx.fillRect(44, 136, 232 * comboRemain, 8);
       ctx.fillStyle = stats.combo > 0 ? '#ffb703' : '#64748b';
-      ctx.font = 'bold 16px monospace';
+      ctx.font = `bold 16px ${FONT_STACK}`;
       ctx.fillText(`COMBO x${stats.combo}  MULT ${stats.multiplier.toFixed(2)}`, 44, 166);
       if (pl.shieldTime > 0 || pl.magnetTime > 0) {
         ctx.fillStyle = '#66f2c2';
-        ctx.font = 'bold 12px monospace';
+        ctx.font = `bold 12px ${FONT_STACK}`;
         const shield = pl.shieldTime > 0 ? `SHIELD ${Math.ceil(pl.shieldTime / 1000)}s` : '';
         const magnet = pl.magnetTime > 0 ? `MAGNET ${Math.ceil(pl.magnetTime / 1000)}s` : '';
         ctx.fillText(`${shield} ${magnet}`.trim(), 44, 190);
@@ -2485,7 +2489,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ctx.fillRect(24, 216, 132 * (1 - pl.dashCooldown / DASH_COOLDOWN), 10);
       } else {
         ctx.fillStyle = '#4cc9f0';
-        ctx.font = '12px monospace';
+        ctx.font = `12px ${FONT_STACK}`;
         ctx.fillText('DASH READY', 24, 226);
       }
 
@@ -2494,7 +2498,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         const promptY = INTRO_TREE_PROMPT_Y + Math.sin(now / 320) * 2;
         ctx.save();
         ctx.textAlign = 'center';
-        ctx.font = 'bold 13px monospace';
+        ctx.font = `bold 13px ${FONT_STACK}`;
         ctx.lineWidth = 3;
         ctx.strokeStyle = 'rgba(15, 23, 42, 0.66)';
         ctx.fillStyle = 'rgba(236, 253, 245, 0.9)';
