@@ -232,6 +232,28 @@ const HOT_SONG_QUERY_ALIASES: Record<string, string[]> = {
 
 const CURATED_VOCALOID_CLASSICS: BiliboardHotSong[] = [
   {
+    title: '歌',
+    aliases: ['歌', '《歌》', 'Do Re Mi', 'Ge'],
+    producers: ['张卡斯', 'Zhang Kasi'],
+    vocalists: ['洛天依', 'Luo Tianyi', 'LuoTianyi', '天依'],
+    bvids: ['BV1gMkWBWEzy'],
+    bilibiliUrls: ['https://www.bilibili.com/video/BV1gMkWBWEzy/'],
+    bestRank: 1,
+    appearances: 1,
+    searchText: '歌 张卡斯 洛天依 luo tianyi 传说曲 do re mi 嘿来吧我们一起唱首',
+  },
+  {
+    title: '人是猫',
+    aliases: ['人是猫', 'Hito wa Neko', 'Ningen wa Neko', 'Humans are Cats'],
+    producers: ['张卡斯', 'Zhang Kasi'],
+    vocalists: ['洛天依', 'Luo Tianyi', 'LuoTianyi', '天依'],
+    bvids: ['BV1Bfjq6LEDi'],
+    bilibiliUrls: ['https://www.bilibili.com/video/BV1Bfjq6LEDi/'],
+    bestRank: 1,
+    appearances: 1,
+    searchText: '人是猫 张卡斯 洛天依 luo tianyi hito wa neko ningen wa neko humans are cats 调查 潜行 游戏 猫',
+  },
+  {
     title: 'メルト',
     aliases: ['メルト', 'Melt'],
     producers: ['ryo'],
