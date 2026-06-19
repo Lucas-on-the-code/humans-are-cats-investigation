@@ -270,7 +270,7 @@ const validateScore = (summary, runPayload) => {
   if (!runPayload.runId || now - runPayload.startAt > RUN_TTL_MS) return 'RUN_EXPIRED';
   if (summary.score < 0 || summary.distance < 0 || summary.survivalTime < 3) return 'INVALID_SCORE';
   if (summary.survivalTime > elapsedSeconds + 8) return 'TIME_TRAVEL';
-  if (summary.distance > summary.survivalTime * 45 + 120) return 'DISTANCE_TOO_HIGH';
+  if (summary.distance > summary.survivalTime * 10 + 150) return 'DISTANCE_TOO_HIGH'; // was *45+120 — real max ~4.4m/s + dash/taxi buffer; 37m/s cheats rejected
   if (summary.score > summary.survivalTime * 4200 + summary.distance * 90 + 60000) return 'SCORE_TOO_HIGH';
   if (summary.bestCombo > 999 || summary.evidence > 999 || summary.scans > 999) return 'STAT_TOO_HIGH';
   return '';
