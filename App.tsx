@@ -766,15 +766,19 @@ const searchBiliboardHotSongs = async (queries: string[], options: { allowFuzzy?
   if (!songs.length) return [];
   const terms = [...new Set(queries.map(normalizeLookupText).filter((term) => term.length >= 2))].slice(0, 6);
   if (terms.length === 0) return [];
-  const ranked = songs
-    .map((song) => ({ song, match: scoreBiliboardSong(song, terms, options, producerAliasDb) }))
-    .filter((item) => item.match.score >= 65)
-    .sort((a, b) => b.match.score - a.match.score)
-    .slice(0, 4);
-  if (!ranked.length) return [];
+  // Chunk + yield: scoreBiliboardSong is DP-heavy (~22M ops over 529 songs × 6 terms).
+  // Yielding every 40 songs lets the game's rAF loop keep rendering during NPC chat.
+  const ranked: { song: BiliboardHotSong; match: ReturnType<typeof scoreBiliboardSong> }[] = [];
+  for (let i = 0; i < songs.length; i++) {
+    const match = scoreBiliboardSong(songs[i], terms, options, producerAliasDb);
+    if (match.score >= 65) ranked.push({ song: songs[i], match });
+    if (i % 40 === 39) await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  const top = ranked.sort((a, b) => b.match.score - a.match.score).slice(0, 4);
+  if (!top.length) return [];
   return [{
     query: queries.join(' | '),
-    results: ranked.map((item) => mapBiliboardSongToLookupResult(item.song, item.match, producerAliasDb)),
+    results: top.map((item) => mapBiliboardSongToLookupResult(item.song, item.match, producerAliasDb)),
     primary: 'Biliboard',
     debug: {
       vocadbUrl: getBiliboardHotDbUrls()[0],
@@ -1685,6 +1689,8 @@ const App: React.FC = () => {
       const currentSongTurn = ++songContextTurnRef.current;
       const wantsLyricsNow = lyricContextKeywords.test(text);
       const isSongDiscussion = songDiscussionKeywords.test(text);
+      // Yield to let "Miku is thinking..." render + one rAF frame before CPU-heavy lookup
+      await new Promise((resolve) => setTimeout(resolve, 0));
       const currentLookups = await injectPassiveHotSongs(nextMessages);
       rememberRecentSongLookups(currentLookups, currentSongTurn);
       const passiveLookups = mergeLookupLists(currentLookups, getRecentSongLookups(currentSongTurn));
@@ -1830,7 +1836,7 @@ const App: React.FC = () => {
   return (
     <div ref={appShellRef} className={`fixed inset-0 bg-[#050510] overflow-hidden font-mono selection:bg-cyan-500 selection:text-black ${shouldHideCursor ? 'cursor-none' : 'cursor-auto'}`}>
       {shouldHideCursor && <style>{'* { cursor: none !important; }'}</style>}
-      <button aria-label={t('settings.ariaLabel')} onClick={() => setIsSettingsOpen(true)} className="absolute top-5 right-5 z-50 h-11 w-11 rounded-full game-panel text-white text-lg hover:border-cyan-300/70 transition-all active:scale-95">⚙</button>
+      <button aria-label={t('settings.ariaLabel')} onClick={() => setIsSettingsOpen(true)} className="absolute top-4 right-4 z-50 h-14 w-14 rounded-full game-panel text-white text-3xl hover:border-cyan-300/70 hover:shadow-[0_0_20px_rgba(34,211,238,0.4)] transition-all active:scale-95">⚙</button>
 
       {isSettingsOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/90 p-4">

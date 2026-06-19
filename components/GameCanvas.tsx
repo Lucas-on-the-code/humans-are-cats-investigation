@@ -2445,7 +2445,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ctx.translate(virtualWidth / 2, 92);
         ctx.scale(pulse, pulse);
         ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
         ctx.font = `bold 28px ${FONT_STACK}`;
+        const promptW = ctx.measureText(rankPrompt.text).width;
+        ctx.fillStyle = 'rgba(5, 5, 16, 0.85)';
+        ctx.beginPath();
+        ctx.roundRect(-promptW / 2 - 18, -22, promptW + 36, 44, 10);
+        ctx.fill();
         ctx.fillStyle = rankPrompt.color;
         ctx.shadowColor = rankPrompt.color;
         ctx.shadowBlur = 18;
