@@ -1482,17 +1482,17 @@ const App: React.FC = () => {
   };
 
   const declineNpcChatInvite = () => {
-    setActiveNpcChat((current) => {
-      if (current?.isInvite && current.target?.type === 'npc' && current.target.kind === 'miku') {
-        const dismissedId = current.target.id;
-        setDismissedMikuIds((prev) => {
-          const next = new Set(prev);
-          next.add(dismissedId);
-          return next;
-        });
-      }
-      return null;
-    });
+    // R5: read from the render-scope closure. Never call setState inside another
+    // setter's updater — updaters must be pure (StrictMode double-invokes them).
+    if (activeNpcChat?.isInvite && activeNpcChat.target?.type === 'npc' && activeNpcChat.target.kind === 'miku') {
+      const dismissedId = activeNpcChat.target.id;
+      setDismissedMikuIds((prev) => {
+        const next = new Set(prev);
+        next.add(dismissedId);
+        return next;
+      });
+    }
+    setActiveNpcChat(null);
     setDialogLines([]);
     setDialogImage(undefined);
   };
@@ -1710,8 +1710,15 @@ const App: React.FC = () => {
       error = sendError instanceof Error ? `连接暂时不可用：${sendError.message}` : '连接暂时不可用。';
     }
 
+    // R3: only apply if the active chat still carries the exact messages array we
+    // sent from (reference equality). Closing/reopening a miku session creates a
+    // new messages array → bail, so a stale reply can't clobber the new conversation
+    // or strand its isLoading. Anchor/invite updates use {...current} and preserve
+    // the reference, so they don't false-bail. (memoryScope alone is NOT a session
+    // identity — it's stable across same-account chats; per codex review.)
     setActiveNpcChat((current) => {
       if (!current || current.kind !== 'miku') return current;
+      if (current.messages !== nextMessages) return current;
       return {
         ...current,
         messages: reply ? [...nextMessages, { role: 'assistant', content: reply }] : nextMessages,

@@ -1,5 +1,5 @@
 {
-  "name": "Copy of Humans are Cats: Investigation",
-  "description": "A stealth-puzzle platformer based on Luo Tianyi's music video. Investigate the neon city, scan humans to reveal their true feline nature, and avoid the panic meter!",
+  "name": "Humans are Cats: Investigation",
+  "description": "A VOCALOID-themed stealth investigation platformer. Infiltrate a neon town where everyone has turned into a cat, scan residents to collect evidence, dodge the panic meter, and chat with Hatsune Miku to look up VOCALOID songs. Powered by DeepSeek.",
   "requestFramePermissions": []
 }
