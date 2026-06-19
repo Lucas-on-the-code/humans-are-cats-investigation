@@ -654,6 +654,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         life: 48 + Math.random() * 34,
         color: colors[i % colors.length],
         size: 3 + Math.random() * 5,
+        shape: 'leaf',
       });
     }
   };
@@ -1465,7 +1466,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         scheduleLoop();
         return;
       }
-      const clampedDelta = Math.min(deltaMs, 40);
+      // R2: cap delta so a single physics step can't tunnel through thin obstacles
+      // (AABB is single-frame, no sweep). 33ms ≈ dtScale 2; full sub-stepping is a follow-up.
+      const clampedDelta = Math.min(deltaMs, 33);
       const dtScale = clampedDelta / BASE_FRAME_MS;
       lastFrameTime = now;
       update(dtScale);
@@ -1716,6 +1719,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           .filter((npc) => !npc.scanned && npc.chatKind === 'miku' && rectsOverlap(playerHitbox, getNpcTalkZone(npc)))
           .map((npc) => npc.id)
       );
+      // I7: deleting the current element during Set.forEach is defined behavior per spec
+      // (deletes of already-visited elements are no-ops; unvisited ones are skipped).
       mikuProximityRef.current.forEach((id) => {
         if (!nearbyMikuIds.has(id)) mikuProximityRef.current.delete(id);
       });
@@ -1858,6 +1863,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       });
 
       projectilesRef.current.forEach((pr) => {
+        if (pr.life <= 0) return; // R4: don't move/iterate an already-dead projectile
         pr.x += pr.vx * dtScale;
         pr.life -= dtScale;
         if (pr.life <= 0) return;
@@ -2278,7 +2284,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ctx.globalAlpha = Math.max(0, pa.life / 52);
         ctx.fillStyle = pa.color;
         ctx.beginPath();
-        if (pa.color === '#86efac' || pa.color === '#4ade80' || pa.color === '#bbf7d0' || pa.color === '#65a30d') {
+        if (pa.shape === 'leaf') {
           ctx.save();
           ctx.translate(pa.x, pa.y);
           ctx.rotate((pa.life + pa.x) * 0.08);
