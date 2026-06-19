@@ -2416,7 +2416,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           const surpassed = leaderboardScores[rank - 1];
           const nowMs = Date.now();
           if (rank === 1) rankUpPromptRef.current = { text: '🏆 全球第一!', color: '#FFD700', until: nowMs + 4000 };
-          else if (surpassed) rankUpPromptRef.current = { text: `超过 ${surpassed.playerName} 成为第${rank}名!`, color: '#ffe066', until: nowMs + 2600 };
+          else if (surpassed) rankUpPromptRef.current = { text: `超过 ${surpassed.playerName} 成为第${rank}名!`, color: '#4cc9f0', until: nowMs + 2600 };
           lastRankRef.current = rank;
         }
         ctx.fillStyle = rank === 1 ? '#FFD700' : '#67e8f9';
