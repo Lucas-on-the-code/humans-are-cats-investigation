@@ -119,6 +119,7 @@ export interface Particle extends Position {
   color: string;
   size: number;
   opacity?: number;
+  shape?: 'leaf' | 'circle';
 }
 
 export interface Item extends Position {
@@ -158,7 +159,7 @@ export interface TouchInput {
   dash: boolean;
 }
 
-export type ZoneType = 'STREET' | 'OFFICE' | 'MALL';
+export type ZoneType = 'STREET' | 'OFFICE';
 
 export interface Zone {
   id: ZoneType;
