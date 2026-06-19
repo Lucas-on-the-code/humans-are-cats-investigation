@@ -52,6 +52,7 @@ interface GameCanvasProps {
   masterVolume: number;
   sfxVolume: number;
   touchInputRef: React.MutableRefObject<TouchInput>;
+  leaderboardScores?: { playerName: string; score: number }[];
 }
 
 const BASE_HEIGHT = 600;
@@ -60,7 +61,7 @@ const MIN_VIEWPORT_HEIGHT = 240;
 const MAX_CHUNKS_PER_GENERATION = 12;
 const VIRTUAL_GROUND_Y = 530;
 const BASE_FRAME_MS = 1000 / 60;
-const DEFAULT_PARTICLE_LIMIT = 220;
+const DEFAULT_PARTICLE_LIMIT = 140;
 const DEFAULT_PROJECTILE_LIMIT = 60;
 const RUN_START_X = 220;
 const CHUNK_LENGTH = 760;
@@ -75,7 +76,7 @@ const INTRO_DROP_START_Y = VIRTUAL_GROUND_Y - 80 * 4;
 const INTRO_DROP_DURATION_MS = 1050;
 const INTRO_DROP_ARC_HEIGHT = 70;
 const MANUAL_ACCEL = 0.82;
-const GROUND_FRICTION = 0.82;
+const GROUND_FRICTION = 0.9; // was 0.82 — raise ground terminal vx (~3.7) up to ~MAX (7.4) so walking matches air speed
 const AIR_FRICTION = 0.94;
 const MAX_MANUAL_SPEED = MOVE_SPEED + 1.4;
 const PROJECTILE_SPEED = 17;
@@ -272,9 +273,16 @@ const getViewportDims = () => {
   const vv = window.visualViewport;
   const rawWidth = Math.round(vv?.width ?? window.innerWidth);
   const rawHeight = Math.round(vv?.height ?? window.innerHeight);
+  // Cap internal resolution so 4K / large displays don't allocate an 8M+ px
+  // backing store per frame — the main Chrome stutter cause on strong hardware.
+  // CSS w-full h-full upscales visually; pixel-art style loses negligible quality.
+  const MAX_INTERNAL_WIDTH = 1920;
+  const MAX_INTERNAL_HEIGHT = 1200;
+  const w = Number.isFinite(rawWidth) && rawWidth > 0 ? Math.max(MIN_VIEWPORT_WIDTH, rawWidth) : 1280;
+  const h = Number.isFinite(rawHeight) && rawHeight > 0 ? Math.max(MIN_VIEWPORT_HEIGHT, rawHeight) : 720;
   return {
-    width: Number.isFinite(rawWidth) && rawWidth > 0 ? Math.max(MIN_VIEWPORT_WIDTH, rawWidth) : 1280,
-    height: Number.isFinite(rawHeight) && rawHeight > 0 ? Math.max(MIN_VIEWPORT_HEIGHT, rawHeight) : 720,
+    width: Math.min(w, MAX_INTERNAL_WIDTH),
+    height: Math.min(h, MAX_INTERNAL_HEIGHT),
   };
 };
 
@@ -282,6 +290,17 @@ const getVirtualWidth = (width: number, height: number) => {
   const safeWidth = Number.isFinite(width) && width > 0 ? Math.max(MIN_VIEWPORT_WIDTH, width) : 1280;
   const safeHeight = Number.isFinite(height) && height > 0 ? Math.max(MIN_VIEWPORT_HEIGHT, height) : 720;
   return (safeWidth / safeHeight) * BASE_HEIGHT;
+};
+
+// In-place compaction — avoids allocating a new array every frame (GC stutter).
+// Equivalent to arr.filter(keep) but mutates arr.length and returns the same array.
+const compactAlive = <T,>(arr: T[], keep: (item: T) => boolean): T[] => {
+  let write = 0;
+  for (let read = 0; read < arr.length; read++) {
+    if (keep(arr[read])) arr[write++] = arr[read];
+  }
+  arr.length = write;
+  return arr;
 };
 
 const rectsOverlap = (
@@ -333,6 +352,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   masterVolume,
   sfxVolume,
   touchInputRef,
+  leaderboardScores,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isLoaded, setIsLoaded] = useState(false);
@@ -388,12 +408,31 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const layerDimsRef = useRef<Record<string, LayerDim>>({});
   const isTabVisibleRef = useRef<boolean>(typeof document !== 'undefined' ? !document.hidden : true);
   const targetFpsRef = useRef<number>(60);
+  const lastRankRef = useRef<number>(Infinity); // global rank — pop "surpassed XXX" when it improves
+  const rankUpPromptRef = useRef<{ text: string; color: string; until: number } | null>(null); // screen-center rank-up banner
   const particleLimitRef = useRef<number>(DEFAULT_PARTICLE_LIMIT);
   const projectileLimitRef = useRef<number>(DEFAULT_PROJECTILE_LIMIT);
   const sceneQualityScaleRef = useRef<number>(1);
   const spriteQualityScaleRef = useRef<number>(1);
+  const disableShadowsRef = useRef<boolean>(false); // iOS Safari software Canvas — shadowBlur is brutal
   const viewportRef = useRef(getViewportDims());
   const resizeRafRef = useRef<number | null>(null);
+
+  // Portrait guard — the landscape side-scroller is unplayable squeezed upright.
+  const [isPortrait, setIsPortrait] = useState<boolean>(
+    () => typeof window !== 'undefined' && window.innerHeight > window.innerWidth,
+  );
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const update = () => setIsPortrait(window.innerHeight > window.innerWidth);
+    update();
+    window.addEventListener('resize', update);
+    window.addEventListener('orientationchange', update);
+    return () => {
+      window.removeEventListener('resize', update);
+      window.removeEventListener('orientationchange', update);
+    };
+  }, []);
 
   useEffect(() => {
     gameStateRef.current = gameState;
@@ -425,6 +464,20 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const shortEdge = Math.min(window.innerWidth, window.innerHeight);
     const isLowEnd = cores <= 4 || memory <= 4 || shortEdge <= 820;
     const isMidEnd = !isLowEnd && (cores <= 8 || memory <= 8 || shortEdge <= 1080);
+    // iOS Safari renders Canvas 2D in software (no GPU acceleration like Chrome),
+    // so shadowBlur / drawImage / fillText are far costlier. Give it a dedicated
+    // aggressive tier and disable shadows entirely, or the game is unplayable.
+    const isIOS = /iPhone|iPad|iPod/i.test(typeof navigator !== 'undefined' ? navigator.userAgent : '')
+      || (typeof navigator !== 'undefined' && navigator.platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1);
+    if (isIOS) {
+      targetFpsRef.current = 30;
+      particleLimitRef.current = 60;
+      projectileLimitRef.current = 24;
+      sceneQualityScaleRef.current = 0.4;
+      spriteQualityScaleRef.current = 0.7;
+      disableShadowsRef.current = true;
+      return;
+    }
 
     if (isLowEnd) {
       targetFpsRef.current = 45;
@@ -460,7 +513,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           const { width, height } = getAssetSize(asset);
           if (height > 0) {
             const scale = BASE_HEIGHT / height;
-            tempDims[key] = { w: width * scale, h: BASE_HEIGHT };
+            tempDims[key] = { w: Math.round(width * scale), h: BASE_HEIGHT };
           }
         }
       });
@@ -565,7 +618,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           const { width, height } = getAssetSize(asset);
           if (height > 0) {
             const scale = BASE_HEIGHT / height;
-            tempDims[key] = { w: width * scale, h: BASE_HEIGHT };
+            tempDims[key] = { w: Math.round(width * scale), h: BASE_HEIGHT };
           }
         }
       });
@@ -767,7 +820,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             : stats.evidence >= 6
               ? '证据猎手'
               : '见习调查员';
-    onGameOver({
+    const runSummary = {
       score,
       distance: getDistanceMeters(stats.distance),
       evidence: stats.evidence,
@@ -776,7 +829,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       bestCombo: stats.bestCombo,
       survivalTime: Math.floor((Date.now() - stats.startedAt) / 1000),
       title,
-    });
+    };
+    // Fire onGameOver OFF the rAF callback. Safari can throttle rAF when WebAudio
+    // hits an error state on the death frame (DEATH sfx + stopMusic source start/stop
+    // racing), which would otherwise stall the setGameState('MENU') flush and leave
+    // the death animation looping forever ("stuck on death"). A macrotask fires
+    // regardless of rAF throttling, so the menu transition lands reliably.
+    setTimeout(() => onGameOver(runSummary), 0);
   };
 
   const makeNpc = (x: number, y: number, overrides: Partial<NPC> = {}): NPC => ({
@@ -1312,7 +1371,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       const asset = imagesRef.current[imgKey];
       if (!asset) return;
       if (asset instanceof HTMLImageElement && (!asset.complete || asset.naturalWidth <= 0)) return;
-      ctx.drawImage(asset, x, y, w, h);
+      ctx.drawImage(asset, Math.round(x), Math.round(y), w, h);
     };
 
     const emitParticles = (x: number, y: number, color: string, count: number, size = 5) => {
@@ -1388,7 +1447,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         p.invulnerableTime = DEATH_ANIM_MAX_MS + 500;
         screenShakeRef.current = 18;
         addFloatingText('MISS', p.x + p.width / 2, p.y - 24, '#ff6b8a', 24);
-        playSound('DEATH');
+        try { playSound('DEATH'); } catch { /* Safari WebAudio can throw on the death frame */ }
         return;
       }
       playSound('DAMAGE');
@@ -1454,24 +1513,33 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       scheduleLoop();
     };
 
+    // Fixed-timestep accumulator: physics advances in constant-size steps so a
+    // dropped frame adds an extra step instead of a jumpy larger dtScale. This
+    // removes the "car/entity moves fast-then-slow" stutter from variable frame
+    // timing — the car now covers the same distance per unit of game time regardless
+    // of whether a frame took 16ms or 33ms. Cap + max-steps prevent spiral of death.
+    let accumulator = 0;
     const loop = (now: number) => {
       animationId = null;
       if (disposed) return;
       if (!isTabVisibleRef.current) {
         lastFrameTime = now;
-        return;
-      }
-      const deltaMs = now - lastFrameTime;
-      if (deltaMs < frameInterval()) {
+        accumulator = 0;
         scheduleLoop();
         return;
       }
-      // R2: cap delta so a single physics step can't tunnel through thin obstacles
-      // (AABB is single-frame, no sweep). 33ms ≈ dtScale 2; full sub-stepping is a follow-up.
-      const clampedDelta = Math.min(deltaMs, 33);
-      const dtScale = clampedDelta / BASE_FRAME_MS;
+      const frameTime = Math.min(now - lastFrameTime, 100); // cap prevents spiral of death
       lastFrameTime = now;
-      update(dtScale);
+      const stepMs = frameInterval();
+      const stepDt = stepMs / BASE_FRAME_MS;
+      accumulator += frameTime;
+      let steps = 0;
+      while (accumulator >= stepMs && steps < 5) {
+        update(stepDt);
+        accumulator -= stepMs;
+        steps++;
+      }
+      if (accumulator > stepMs * 3) accumulator = 0; // discard uncatchable backlog
       syncNpcChatAnchor();
       draw();
       scheduleLoop();
@@ -1497,9 +1565,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           cameraRef.current.x = getIntroCameraX(virtualWidth);
           if (anyTouchInput || anyKeyInput || pointerAction) startIntroJump();
           particlesRef.current.forEach((part) => { part.x += part.vx * dtScale; part.y += part.vy * dtScale; part.life -= dtScale; });
-          particlesRef.current = particlesRef.current.filter((part) => part.life > 0);
+          compactAlive(particlesRef.current, (part) => part.life > 0);
           floatingTextsRef.current.forEach((ft) => { ft.y += ft.vy * dtScale; ft.life -= dtScale; });
-          floatingTextsRef.current = floatingTextsRef.current.filter((ft) => ft.life > 0);
+          compactAlive(floatingTextsRef.current, (ft) => ft.life > 0);
           return;
         }
 
@@ -1519,9 +1587,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         cameraRef.current.x = lerp(introDropRef.current.startCameraX, targetCamX, cameraEase);
 
         particlesRef.current.forEach((part) => { part.x += part.vx * dtScale; part.y += part.vy * dtScale; part.life -= dtScale; });
-        particlesRef.current = particlesRef.current.filter((part) => part.life > 0);
+        compactAlive(particlesRef.current, (part) => part.life > 0);
         floatingTextsRef.current.forEach((ft) => { ft.y += ft.vy * dtScale; ft.life -= dtScale; });
-        floatingTextsRef.current = floatingTextsRef.current.filter((ft) => ft.life > 0);
+        compactAlive(floatingTextsRef.current, (ft) => ft.life > 0);
 
         if (introProgress >= 1) {
           p.x = RUN_START_X;
@@ -1551,9 +1619,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           car.x += car.vx * dtScale;
         });
         particlesRef.current.forEach((part) => { part.x += part.vx * dtScale; part.y += part.vy * dtScale; part.life -= dtScale; });
-        particlesRef.current = particlesRef.current.filter((part) => part.life > 0);
+        compactAlive(particlesRef.current, (part) => part.life > 0);
         floatingTextsRef.current.forEach((ft) => { ft.y += ft.vy * dtScale; ft.life -= dtScale; });
-        floatingTextsRef.current = floatingTextsRef.current.filter((ft) => ft.life > 0);
+        compactAlive(floatingTextsRef.current, (ft) => ft.life > 0);
         if (screenShakeRef.current > 0) screenShakeRef.current = Math.max(0, screenShakeRef.current - 1.2 * dtScale);
 
         const viewLeft = cameraRef.current.x - CLEAN_BEHIND;
@@ -1637,7 +1705,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         p.vx = p.direction * DASH_SPEED;
       } else {
         p.vx += horizontalInput * MANUAL_ACCEL * dtScale;
-        p.vx *= p.isGrounded ? GROUND_FRICTION : AIR_FRICTION;
+        p.vx *= Math.pow(p.isGrounded ? GROUND_FRICTION : AIR_FRICTION, dtScale);
         p.vx = Math.max(-MAX_MANUAL_SPEED, Math.min(MAX_MANUAL_SPEED, p.vx));
         if (horizontalInput === 0 && Math.abs(p.vx) < 0.08) p.vx = 0;
       }
@@ -1886,7 +1954,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           }
         });
       });
-      projectilesRef.current = projectilesRef.current.filter((pr) => pr.life > 0);
+      compactAlive(projectilesRef.current, (pr) => pr.life > 0);
 
       itemsRef.current.forEach((it) => {
         it.floatOffset = Math.sin(now / 200 + it.id) * 8;
@@ -1906,12 +1974,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
         if (!it.collected && circleRectOverlap(getItemPickupCircle(it), pickupHitbox)) collectItem(it);
       });
-      itemsRef.current = itemsRef.current.filter((it) => !it.collected);
+      compactAlive(itemsRef.current, (it) => !it.collected);
 
       particlesRef.current.forEach((part) => { part.x += part.vx * dtScale; part.y += part.vy * dtScale; part.life -= dtScale; });
-      particlesRef.current = particlesRef.current.filter((part) => part.life > 0);
+      compactAlive(particlesRef.current, (part) => part.life > 0);
       floatingTextsRef.current.forEach((ft) => { ft.y += ft.vy * dtScale; ft.life -= dtScale; });
-      floatingTextsRef.current = floatingTextsRef.current.filter((ft) => ft.life > 0);
+      compactAlive(floatingTextsRef.current, (ft) => ft.life > 0);
       if (screenShakeRef.current > 0) screenShakeRef.current = Math.max(0, screenShakeRef.current - 1.2 * dtScale);
 
       const cleanupLeft = Math.max(RUN_START_X - 120, cameraRef.current.x - CLEAN_FAR_BEHIND);
@@ -1922,13 +1990,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           cleanupLeft + virtualWidth * AIR_WALL_CAMERA_SAFE_RATIO,
         );
       }
-      platformsRef.current = platformsRef.current.filter((o) => o.x + o.width > cleanupLeft);
-      hazardsRef.current = hazardsRef.current.filter((o) => o.x + o.width > cleanupLeft);
-      obstaclesRef.current = obstaclesRef.current.filter((o) => o.x + o.width > cleanupLeft);
-      pedestriansRef.current = pedestriansRef.current.filter((o) => o.x + o.width > cleanupLeft);
-      carsRef.current = carsRef.current.filter((o) => o.occupied || (o.x + o.width > cleanupLeft && o.x < viewRight));
-      npcsRef.current = npcsRef.current.filter((o) => o.x + o.width > cleanupLeft);
-      itemsRef.current = itemsRef.current.filter((o) => o.x + o.width > cleanupLeft);
+      compactAlive(platformsRef.current, (o) => o.x + o.width > cleanupLeft);
+      compactAlive(hazardsRef.current, (o) => o.x + o.width > cleanupLeft);
+      compactAlive(obstaclesRef.current, (o) => o.x + o.width > cleanupLeft);
+      compactAlive(pedestriansRef.current, (o) => o.x + o.width > cleanupLeft);
+      compactAlive(carsRef.current, (o) => o.occupied || (o.x + o.width > cleanupLeft && o.x < viewRight));
+      compactAlive(npcsRef.current, (o) => o.x + o.width > cleanupLeft);
+      compactAlive(itemsRef.current, (o) => o.x + o.width > cleanupLeft);
 
       const minCameraX = Math.max(0, leftAirWallXRef.current - virtualWidth * AIR_WALL_CAMERA_SAFE_RATIO);
       const targetCamX = Math.max(minCameraX, getRunCameraX(p.x, virtualWidth));
@@ -1999,6 +2067,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       ctx.restore();
     };
 
+    // Cache gradients (colors/positions are constant) — created once, reused per frame.
+    let cachedSkyGradient: CanvasGradient | null = null;
+    let cachedHudGradient: CanvasGradient | null = null;
     const draw = () => {
       const scale = Math.max(MIN_VIEWPORT_HEIGHT, dims.height) / BASE_HEIGHT;
       const virtualWidth = getVirtualWidth(dims.width, dims.height);
@@ -2007,11 +2078,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       ctx.save();
       ctx.scale(scale, scale);
       ctx.translate(shake, shake * 0.35);
-      const skyGradient = ctx.createLinearGradient(0, 0, 0, BASE_HEIGHT);
-      skyGradient.addColorStop(0, '#0b1228');
-      skyGradient.addColorStop(0.65, '#0f1b2f');
-      skyGradient.addColorStop(1, '#101725');
-      ctx.fillStyle = skyGradient;
+      if (!cachedSkyGradient) {
+        cachedSkyGradient = ctx.createLinearGradient(0, 0, 0, BASE_HEIGHT);
+        cachedSkyGradient.addColorStop(0, '#0b1228');
+        cachedSkyGradient.addColorStop(0.65, '#0f1b2f');
+        cachedSkyGradient.addColorStop(1, '#101725');
+      }
+      ctx.fillStyle = cachedSkyGradient;
       ctx.fillRect(-20, -20, virtualWidth + 40, BASE_HEIGHT + 40);
       ctx.fillStyle = 'rgba(20, 40, 72, 0.35)';
       for (let i = -2; i < 12; i++) {
@@ -2077,7 +2150,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ctx.globalAlpha = active ? 0.95 : 0.22;
         ctx.fillStyle = active ? '#ff214f' : '#7b2538';
         ctx.shadowColor = active ? '#ff214f' : 'transparent';
-        ctx.shadowBlur = active ? 18 : 0;
+        ctx.shadowBlur = (active && !disableShadowsRef.current) ? 6 : 0;
         ctx.fillRect(hazard.x, hazard.y, hazard.width, hazard.height);
         ctx.shadowBlur = 0;
         ctx.fillStyle = active ? '#ffd1dc' : '#915265';
@@ -2104,7 +2177,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         } else {
           const pulse = 0.5 + Math.sin(now / 150 + obstacle.x * 0.01) * 0.5;
           ctx.shadowColor = '#f0abfc';
-          ctx.shadowBlur = 5 + pulse * 8;
+          ctx.shadowBlur = disableShadowsRef.current ? 0 : pulse * 3; // iOS disables (software Canvas)
           ctx.fillStyle = '#7c3aed';
           ctx.strokeStyle = '#fde047';
           ctx.lineWidth = 3;
@@ -2315,22 +2388,60 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       const hudW = 318;
       const hudH = 178;
       const hudRadius = 12;
-      const hudGradient = ctx.createLinearGradient(hudX, hudY, hudX, hudY + hudH);
-      hudGradient.addColorStop(0, 'rgba(8, 17, 38, 0.82)');
-      hudGradient.addColorStop(1, 'rgba(2, 6, 23, 0.72)');
+      if (!cachedHudGradient) {
+        cachedHudGradient = ctx.createLinearGradient(hudX, hudY, hudX, hudY + hudH);
+        cachedHudGradient.addColorStop(0, 'rgba(8, 17, 38, 0.82)');
+        cachedHudGradient.addColorStop(1, 'rgba(2, 6, 23, 0.72)');
+      }
       ctx.save();
       ctx.beginPath();
       ctx.roundRect(hudX, hudY, hudW, hudH, hudRadius);
-      ctx.fillStyle = hudGradient;
+      ctx.fillStyle = cachedHudGradient;
       ctx.fill();
       ctx.strokeStyle = 'rgba(125, 211, 252, 0.34)';
       ctx.lineWidth = 1;
       ctx.stroke();
       ctx.shadowColor = 'rgba(34, 211, 238, 0.18)';
-      ctx.shadowBlur = 24;
+      ctx.shadowBlur = disableShadowsRef.current ? 0 : 6; // iOS disables (software Canvas)
       ctx.strokeStyle = 'rgba(34, 211, 238, 0.12)';
       ctx.stroke();
       ctx.restore();
+      // Live global rank + "surpassed player X" prompt
+      if (leaderboardScores && leaderboardScores.length > 0) {
+        let rank = leaderboardScores.length + 1;
+        for (let i = 0; i < leaderboardScores.length; i++) {
+          if (stats.score > leaderboardScores[i].score) { rank = i + 1; break; }
+        }
+        if (stats.score > 0 && rank < lastRankRef.current) {
+          const surpassed = leaderboardScores[rank - 1];
+          const nowMs = Date.now();
+          if (rank === 1) rankUpPromptRef.current = { text: '🏆 全球第一!', color: '#FFD700', until: nowMs + 4000 };
+          else if (surpassed) rankUpPromptRef.current = { text: `超过 ${surpassed.playerName} 成为第${rank}名!`, color: '#4cc9f0', until: nowMs + 2600 };
+          lastRankRef.current = rank;
+        }
+        ctx.fillStyle = rank === 1 ? '#FFD700' : '#67e8f9';
+        ctx.font = 'bold 13px monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText(rank === 1 ? 'RANK 🏆1' : `RANK ${rank}`, 244, 62);
+      }
+      // Screen-center-top rank-up banner: large, pulsing, glowing, fades out
+      const rankPrompt = rankUpPromptRef.current;
+      const rankPromptNow = Date.now();
+      if (rankPrompt && rankPromptNow < rankPrompt.until) {
+        const remain = rankPrompt.until - rankPromptNow;
+        ctx.save();
+        ctx.globalAlpha = Math.min(1, remain / 600);
+        const pulse = 1 + Math.sin(rankPromptNow / 110) * 0.06;
+        ctx.translate(virtualWidth / 2, 92);
+        ctx.scale(pulse, pulse);
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 28px monospace';
+        ctx.fillStyle = rankPrompt.color;
+        ctx.shadowColor = rankPrompt.color;
+        ctx.shadowBlur = 18;
+        ctx.fillText(rankPrompt.text, 0, 0);
+        ctx.restore();
+      }
       ctx.fillStyle = '#FFD700';
       ctx.font = 'bold 28px monospace';
       ctx.fillText(`${Math.floor(stats.score).toLocaleString()}`, 44, 62);
@@ -2407,10 +2518,18 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     <div className="flex flex-col items-center justify-center h-screen w-screen bg-[#050510] gap-6">
       <div className="text-cyan-500 font-mono text-2xl animate-pulse tracking-widest uppercase">Initializing CAT_NET...</div>
       <div className="w-64 h-2 bg-slate-800 rounded-full overflow-hidden relative">
-        <div className="absolute inset-0 bg-cyan-500/30 animate-[shimmer_2s_infinite]"></div>
-        <div className="h-full bg-cyan-500 shadow-[0_0_10px_#06b6d4] transition-all duration-500" style={{ width: '60%' }}></div>
+        <div className="h-full bg-cyan-500 shadow-[0_0_10px_#06b6d4]" style={{ animation: 'loadingProgress 2.4s ease-out forwards' }}></div>
       </div>
       <div className="text-slate-500 font-mono text-xs animate-pulse">正在同步现实世界与猫星通讯...</div>
+    </div>
+  );
+
+  if (isPortrait) return (
+    <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-[#050510] text-center px-8 select-none [-webkit-tap-highlight-color:transparent]">
+      <div className="text-6xl md:text-7xl mb-6 animate-pulse">📱</div>
+      <div className="text-cyan-300 font-mono text-xl md:text-2xl tracking-widest mb-3">请横屏游玩</div>
+      <div className="text-slate-400 font-mono text-sm md:text-base">ROTATE YOUR DEVICE TO LANDSCAPE</div>
+      <div className="mt-8 text-slate-600 font-mono text-xs">Humans are Cats: Investigation 是横版游戏</div>
     </div>
   );
 
