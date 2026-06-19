@@ -11,6 +11,14 @@ const distDir = join(root, 'dist');
 const port = Number(process.env.PORT || 3000);
 const host = process.env.HOST || '0.0.0.0';
 
+// Fail-loud: the HMAC SECRET must be set in production. Without it, every restart
+// invalidates all sessions/runTokens and leaderboard submissions silently fail (F3).
+if (!process.env.GAME_SERVER_SECRET || process.env.GAME_SERVER_SECRET.length < 32) {
+  console.error('FATAL: GAME_SERVER_SECRET must be set to a random string of >= 32 chars.');
+  console.error('Generate one with:  node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"');
+  process.exit(1);
+}
+
 const mimeTypes = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',

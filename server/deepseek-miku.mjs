@@ -186,6 +186,9 @@ const callDeepSeek = async (apiKey, messages, options = {}) => {
       temperature: options.temperature ?? 0.85,
       max_tokens: options.maxTokens ?? 180,
     }),
+    // H4: bound upstream latency so a slow/hung DeepSeek response can't pin a
+    // connection and accumulate load on the event loop.
+    signal: AbortSignal.timeout(15000),
   });
 
   if (!upstream.ok) {
@@ -684,7 +687,8 @@ export const handleMikuChatEndRequest = async (req, res) => {
     });
   } catch (error) {
     if (error?.message === 'DEEPSEEK_UPSTREAM_ERROR') {
-      writeJson(res, 502, { error: 'DEEPSEEK_UPSTREAM_ERROR', detail: error.detail });
+      console.error('[miku] deepseek upstream error', { detail: error.detail, status: error.status });
+      writeJson(res, 502, { error: 'DEEPSEEK_UPSTREAM_ERROR' });
       return;
     }
     if (error?.message === 'DEEPSEEK_EMPTY_REPLY') {
@@ -836,7 +840,8 @@ export const handleMikuChatRequest = async (req, res) => {
     });
   } catch (error) {
     if (error?.message === 'DEEPSEEK_UPSTREAM_ERROR') {
-      writeJson(res, 502, { error: 'DEEPSEEK_UPSTREAM_ERROR', detail: error.detail });
+      console.error('[miku] deepseek upstream error', { detail: error.detail, status: error.status });
+      writeJson(res, 502, { error: 'DEEPSEEK_UPSTREAM_ERROR' });
       return;
     }
     if (error?.message === 'DEEPSEEK_EMPTY_REPLY') {

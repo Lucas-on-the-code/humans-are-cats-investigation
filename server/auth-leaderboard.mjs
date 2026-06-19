@@ -7,7 +7,10 @@ const DATA_PATH = join(fileURLToPath(new URL('..', import.meta.url)), 'data/game
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
 const RUN_TTL_MS = 1000 * 60 * 60 * 2;
 const POW_DIFFICULTY = 4;
-const SECRET = process.env.GAME_SERVER_SECRET || randomBytes(32).toString('hex');
+const SECRET = process.env.GAME_SERVER_SECRET || (() => {
+  console.warn('[auth] GAME_SERVER_SECRET not set — using an ephemeral random secret. Set GAME_SERVER_SECRET in production; server.mjs enforces it on boot.');
+  return randomBytes(32).toString('hex');
+})();
 
 const rateBuckets = new Map();
 const powChallenges = new Map();
@@ -30,9 +33,17 @@ const readDb = async () => {
   }
 };
 
-const writeDb = async (db) => {
-  await mkdir(dirname(DATA_PATH), { recursive: true });
-  await writeFile(DATA_PATH, `${JSON.stringify(db, null, 2)}\n`, 'utf8');
+// Serialize DB writes so concurrent read-modify-write cycles don't lose updates.
+// Submit is the high-concurrency path on the leaderboard (H3).
+let writeChain = Promise.resolve();
+const writeDb = (db) => {
+  const run = writeChain.then(async () => {
+    await mkdir(dirname(DATA_PATH), { recursive: true });
+    await writeFile(DATA_PATH, `${JSON.stringify(db, null, 2)}\n`, 'utf8');
+  });
+  // Keep the chain alive even if one write rejects; the caller still sees the error.
+  writeChain = run.catch(() => {});
+  return run;
 };
 
 const readJsonBody = async (req) => {
@@ -48,9 +59,28 @@ const writeJson = (res, status, payload) => {
   res.end(JSON.stringify(payload));
 };
 
+// Number of trusted reverse-proxy hops. 0 = ignore X-Forwarded-For entirely
+// (safe default for direct deployment). Set to the proxy count when deployed
+// behind nginx/Caddy so rate-limiting and PoW bind to the real client IP.
+const TRUSTED_PROXY_HOPS = Math.max(0, Number(process.env.TRUSTED_PROXY_HOPS || '0'));
+
 const getIp = (req) => {
-  const forwarded = req.headers['x-forwarded-for'];
-  return String(Array.isArray(forwarded) ? forwarded[0] : forwarded || req.socket.remoteAddress || 'local').split(',')[0].trim();
+  if (TRUSTED_PROXY_HOPS > 0) {
+    const forwarded = req.headers['x-forwarded-for'];
+    if (forwarded) {
+      const parts = String(Array.isArray(forwarded) ? forwarded[0] : forwarded)
+        .split(',')
+        .map((segment) => segment.trim())
+        .filter(Boolean);
+      // XFF is appended left-to-right; the rightmost entry is the closest proxy.
+      // Skip TRUSTED_PROXY_HOPS trusted proxies from the right; the entry to their
+      // left is the real client. If there aren't enough entries, fall back to the
+      // socket address (un-spoofable) — never parts[0], which is client-forged.
+      const clientIndex = parts.length - TRUSTED_PROXY_HOPS - 1;
+      if (clientIndex >= 0) return parts[clientIndex] || req.socket.remoteAddress || 'local';
+    }
+  }
+  return req.socket.remoteAddress || 'local';
 };
 
 const hashIp = (ip) => createHash('sha256').update(`ip:${ip}`).digest('hex').slice(0, 24);
@@ -175,6 +205,21 @@ const validateScore = (summary, runPayload) => {
   return '';
 };
 
+// F1: flag scores that pass validateScore but sit near its ceiling. Accepted, logged for review.
+// Full server-authoritative anti-cheat is a larger follow-up (see GSTACK_AUDIT.md F1).
+const isScoreSuspicious = (summary) => {
+  const ceiling = summary.survivalTime * 4200 + summary.distance * 90 + 60000;
+  return summary.score > ceiling * 0.7;
+};
+
+// H3: serialize read-modify-write critical sections so concurrent ops don't lose updates.
+let dbMutex = Promise.resolve();
+const withDbMutex = (fn) => {
+  const result = dbMutex.then(fn, fn);
+  dbMutex = result.catch(() => {});
+  return result;
+};
+
 const bestScoresByPlayer = (db) => {
   const bestByUser = new Map();
   for (const entry of db.scores) {
@@ -275,12 +320,6 @@ const sanitizeMikuMemory = (memory) => {
   };
 };
 
-const hasMikuMemory = (memory) => (
-  memory.sessions.length > 0
-  || Boolean(memory.knowledge?.content)
-  || Boolean(memory.pendingGreeting?.content)
-);
-
 const mergeMikuMemories = (current, incoming, options = {}) => {
   const safeCurrent = sanitizeMikuMemory(current);
   const safeIncoming = sanitizeMikuMemory(incoming);
@@ -324,7 +363,8 @@ export const handleMikuMemoryRequest = async (req, res) => {
 
     return writeJson(res, 405, { error: 'METHOD_NOT_ALLOWED' });
   } catch (error) {
-    return writeJson(res, 500, { error: error instanceof Error ? error.message : 'MIKU_MEMORY_ERROR' });
+    console.error('[auth] miku-memory error', error);
+    return writeJson(res, 500, { error: 'INTERNAL_ERROR' });
   }
 };
 
@@ -390,7 +430,8 @@ export const handleAuthRequest = async (req, res) => {
 
     return writeJson(res, 404, { error: 'NOT_FOUND' });
   } catch (error) {
-    return writeJson(res, 500, { error: error instanceof Error ? error.message : 'AUTH_ERROR' });
+    console.error('[auth] auth error', error);
+    return writeJson(res, 500, { error: 'INTERNAL_ERROR' });
   }
 };
 
@@ -415,37 +456,54 @@ export const handleLeaderboardRequest = async (req, res) => {
     }
 
     if ((path === '/submit' || path === '/api/leaderboard/submit') && req.method === 'POST') {
-      const { db, user } = await getSessionUser(req);
+      const { user } = await getSessionUser(req);
       if (!user) return writeJson(res, 401, { error: 'LOGIN_REQUIRED' });
+      // F1 anti-cheat (rate): cap submissions per user to blunt scripted flooding.
+      if (hitRateLimit(`submit:${user.id}`, 10, 60 * 1000)) return writeJson(res, 429, { error: 'SUBMIT_RATE_LIMITED' });
       const body = await readJsonBody(req);
       const runPayload = verifySignedPayload(body.runToken);
       const summary = normalizeSummary(body.summary);
       if (!runPayload) return writeJson(res, 400, { error: 'BAD_RUN_TOKEN' });
       if (runPayload.userId && runPayload.userId !== user.id) return writeJson(res, 403, { error: 'RUN_USER_MISMATCH' });
-      if (db.submittedRunIds.includes(runPayload.runId)) return writeJson(res, 409, { error: 'RUN_ALREADY_SUBMITTED' });
       const scoreError = validateScore(summary, runPayload);
       if (scoreError) return writeJson(res, 400, { error: scoreError });
 
-      const entry = {
-        id: randomBytes(12).toString('base64url'),
-        userId: user.id,
-        playerName: user.username,
-        createdAt: Date.now(),
-        runId: runPayload.runId,
-        ...summary,
-      };
-      db.scores.push(entry);
-      db.submittedRunIds.push(runPayload.runId);
-      db.submittedRunIds = db.submittedRunIds.slice(-5000);
-      db.scores = db.scores.sort((a, b) => b.score - a.score).slice(0, 500);
-      await writeDb(db);
-      const viewerBest = userBestScore(db, user.id);
-      const submittedEntry = rankedScores(db).find((item) => item.id === entry.id) || { ...entry, rank: viewerBest?.rank, createdAt: new Date(entry.createdAt).toISOString() };
-      return writeJson(res, 200, { entry: submittedEntry, entries: topScores(db), viewerBest });
+      // H3: re-read the latest DB under a mutex so concurrent submits can't
+      // overwrite each other's new entry. runId replay is checked on the freshest data.
+      const outcome = await withDbMutex(async () => {
+        const freshDb = await readDb();
+        if (freshDb.submittedRunIds.includes(runPayload.runId)) return { status: 409 };
+
+        // F1 anti-cheat (review): scores near the validation ceiling are accepted but flagged.
+        if (isScoreSuspicious(summary)) {
+          console.warn('[leaderboard] suspicious score', { user: user.id, runId: runPayload.runId, score: summary.score, survivalTime: summary.survivalTime, distance: summary.distance });
+        }
+
+        const entry = {
+          id: randomBytes(12).toString('base64url'),
+          userId: user.id,
+          playerName: user.username,
+          createdAt: Date.now(),
+          runId: runPayload.runId,
+          ...summary,
+        };
+        freshDb.scores.push(entry);
+        freshDb.submittedRunIds.push(runPayload.runId);
+        freshDb.submittedRunIds = freshDb.submittedRunIds.slice(-5000);
+        freshDb.scores = freshDb.scores.sort((a, b) => b.score - a.score).slice(0, 500);
+        await writeDb(freshDb);
+        const viewerBest = userBestScore(freshDb, user.id);
+        const submittedEntry = rankedScores(freshDb).find((item) => item.id === entry.id) || { ...entry, rank: viewerBest?.rank, createdAt: new Date(entry.createdAt).toISOString() };
+        return { status: 200, entry: submittedEntry, entries: topScores(freshDb), viewerBest };
+      });
+
+      if (outcome.status === 409) return writeJson(res, 409, { error: 'RUN_ALREADY_SUBMITTED' });
+      return writeJson(res, 200, { entry: outcome.entry, entries: outcome.entries, viewerBest: outcome.viewerBest });
     }
 
     return writeJson(res, 404, { error: 'NOT_FOUND' });
   } catch (error) {
-    return writeJson(res, 500, { error: error instanceof Error ? error.message : 'LEADERBOARD_ERROR' });
+    console.error('[auth] leaderboard error', error);
+    return writeJson(res, 500, { error: 'INTERNAL_ERROR' });
   }
 };
