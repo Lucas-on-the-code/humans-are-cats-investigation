@@ -1908,7 +1908,7 @@ const App: React.FC = () => {
                    {authMessage && <div className="mt-3 text-xs text-yellow-200">{authMessage}</div>}
                  </div>
 
-                 <div className="game-panel rounded-lg p-4 w-full">
+                 <div className="game-panel rounded-lg p-4 w-full max-h-[60vh] overflow-y-auto">
                    <div className="flex items-center justify-between gap-3 mb-3">
                      <h2 className="text-yellow-300 font-bold text-left">全球 TOP 50</h2>
                      <button onClick={() => void fetchGlobalLeaderboard()} className="text-xs game-button-secondary px-2 py-1 rounded-md">刷新</button>
