@@ -325,7 +325,7 @@ class GameAudioSystem {
     gain.gain.value = volume;
     source.connect(gain);
     gain.connect(ctx.destination);
-    source.start(0);
+    try { source.start(0); } catch { return false; /* Safari can throw on a not-running/erroring context */ }
     return true;
   }
 
