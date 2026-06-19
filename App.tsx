@@ -1854,6 +1854,7 @@ const App: React.FC = () => {
           dismissedMikuIds={dismissedMikuIds}
           onNpcChatAnchorChange={updateNpcChatAnchor}
           masterVolume={masterVolume} sfxVolume={sfxVolume} touchInputRef={touchInputRef}
+          leaderboardScores={globalLeaderboard.map((e) => ({ playerName: e.playerName, score: e.score }))}
         />
       </div>
       )}

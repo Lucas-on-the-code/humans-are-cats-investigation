@@ -52,6 +52,7 @@ interface GameCanvasProps {
   masterVolume: number;
   sfxVolume: number;
   touchInputRef: React.MutableRefObject<TouchInput>;
+  leaderboardScores?: { playerName: string; score: number }[];
 }
 
 const BASE_HEIGHT = 600;
@@ -351,6 +352,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   masterVolume,
   sfxVolume,
   touchInputRef,
+  leaderboardScores,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isLoaded, setIsLoaded] = useState(false);
@@ -406,6 +408,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const layerDimsRef = useRef<Record<string, LayerDim>>({});
   const isTabVisibleRef = useRef<boolean>(typeof document !== 'undefined' ? !document.hidden : true);
   const targetFpsRef = useRef<number>(60);
+  const lastRankRef = useRef<number>(Infinity); // global rank — pop "surpassed XXX" when it improves
+  const rankUpPromptRef = useRef<{ text: string; color: string; until: number } | null>(null); // screen-center rank-up banner
   const particleLimitRef = useRef<number>(DEFAULT_PARTICLE_LIMIT);
   const projectileLimitRef = useRef<number>(DEFAULT_PROJECTILE_LIMIT);
   const sceneQualityScaleRef = useRef<number>(1);
@@ -2402,6 +2406,42 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       ctx.strokeStyle = 'rgba(34, 211, 238, 0.12)';
       ctx.stroke();
       ctx.restore();
+      // Live global rank + "surpassed player X" prompt
+      if (leaderboardScores && leaderboardScores.length > 0) {
+        let rank = leaderboardScores.length + 1;
+        for (let i = 0; i < leaderboardScores.length; i++) {
+          if (stats.score > leaderboardScores[i].score) { rank = i + 1; break; }
+        }
+        if (stats.score > 0 && rank < lastRankRef.current) {
+          const surpassed = leaderboardScores[rank - 1];
+          const nowMs = Date.now();
+          if (rank === 1) rankUpPromptRef.current = { text: '🏆 全球第一!', color: '#FFD700', until: nowMs + 4000 };
+          else if (surpassed) rankUpPromptRef.current = { text: `超过 ${surpassed.playerName} 成为第${rank}名!`, color: '#ffe066', until: nowMs + 2600 };
+          lastRankRef.current = rank;
+        }
+        ctx.fillStyle = rank === 1 ? '#FFD700' : '#67e8f9';
+        ctx.font = 'bold 13px monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText(rank === 1 ? 'RANK 🏆1' : `RANK ${rank}`, 244, 62);
+      }
+      // Screen-center-top rank-up banner: large, pulsing, glowing, fades out
+      const rankPrompt = rankUpPromptRef.current;
+      const rankPromptNow = Date.now();
+      if (rankPrompt && rankPromptNow < rankPrompt.until) {
+        const remain = rankPrompt.until - rankPromptNow;
+        ctx.save();
+        ctx.globalAlpha = Math.min(1, remain / 600);
+        const pulse = 1 + Math.sin(rankPromptNow / 110) * 0.06;
+        ctx.translate(virtualWidth / 2, 92);
+        ctx.scale(pulse, pulse);
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 28px monospace';
+        ctx.fillStyle = rankPrompt.color;
+        ctx.shadowColor = rankPrompt.color;
+        ctx.shadowBlur = 18;
+        ctx.fillText(rankPrompt.text, 0, 0);
+        ctx.restore();
+      }
       ctx.fillStyle = '#FFD700';
       ctx.font = 'bold 28px monospace';
       ctx.fillText(`${Math.floor(stats.score).toLocaleString()}`, 44, 62);
