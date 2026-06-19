@@ -1,9 +1,15 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import Database from 'better-sqlite3';
+import { readFileSync } from 'node:fs';
 import { createHmac, pbkdf2Sync, randomBytes, timingSafeEqual, createHash } from 'node:crypto';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const DATA_PATH = join(fileURLToPath(new URL('..', import.meta.url)), 'data/game-auth-db.json');
+// SQLite DB path: production sets GAME_DB_PATH (JSON legacy name) — we swap the
+// extension to .sqlite. Lives OUTSIDE the app dir (GAME_DB_PATH), so rsync/deploys
+// never wipe user data. Falls back to app/data/ for dev.
+const JSON_LEGACY_PATH = process.env.GAME_DB_PATH || join(fileURLToPath(new URL('..', import.meta.url)), 'data/game-auth-db.json');
+const DB_FILE = JSON_LEGACY_PATH.replace(/\.json$/i, '.sqlite');
+
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
 const RUN_TTL_MS = 1000 * 60 * 60 * 2;
 const POW_DIFFICULTY = 4;
@@ -15,37 +21,132 @@ const SECRET = process.env.GAME_SERVER_SECRET || (() => {
 const rateBuckets = new Map();
 const powChallenges = new Map();
 
-const defaultDb = () => ({
-  version: 1,
-  users: [],
-  sessions: [],
-  scores: [],
-  submittedRunIds: [],
-  mikuMemories: {},
-});
+// ---------- DB open + schema ----------
+const db = new Database(DB_FILE);
+db.pragma('journal_mode = WAL');       // concurrent readers + single writer, no full-table lock
+db.pragma('synchronous = NORMAL');     // safe with WAL, faster commits
+db.exec(`
+  CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    username TEXT NOT NULL COLLATE NOCASE,
+    passwordHash TEXT NOT NULL,
+    createdAt INTEGER NOT NULL,
+    createdIpHash TEXT
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username);
 
-const readDb = async () => {
+  CREATE TABLE IF NOT EXISTS sessions (
+    token TEXT PRIMARY KEY,
+    userId TEXT NOT NULL,
+    createdAt INTEGER NOT NULL,
+    expiresAt INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_sessions_userId ON sessions(userId);
+
+  CREATE TABLE IF NOT EXISTS scores (
+    id TEXT PRIMARY KEY,
+    userId TEXT NOT NULL,
+    playerName TEXT NOT NULL,
+    createdAt INTEGER NOT NULL,
+    runId TEXT NOT NULL UNIQUE,
+    score INTEGER NOT NULL,
+    distance INTEGER NOT NULL DEFAULT 0,
+    evidence INTEGER NOT NULL DEFAULT 0,
+    scans INTEGER NOT NULL DEFAULT 0,
+    nearMisses INTEGER NOT NULL DEFAULT 0,
+    bestCombo INTEGER NOT NULL DEFAULT 0,
+    survivalTime INTEGER NOT NULL DEFAULT 0,
+    title TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_scores_userId_score ON scores(userId, score DESC);
+  CREATE INDEX IF NOT EXISTS idx_scores_score ON scores(score DESC);
+
+  CREATE TABLE IF NOT EXISTS submitted_run_ids (
+    runId TEXT PRIMARY KEY,
+    createdAt INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS miku_memories (
+    userId TEXT PRIMARY KEY,
+    memory TEXT NOT NULL,
+    updatedAt INTEGER NOT NULL
+  );
+`);
+
+// ---------- one-time migration from legacy JSON ----------
+function migrateFromJson() {
   try {
-    const raw = await readFile(DATA_PATH, 'utf8');
-    return { ...defaultDb(), ...JSON.parse(raw) };
+    const raw = readFileSync(JSON_LEGACY_PATH, 'utf8');
+    const data = JSON.parse(raw);
+    const hasData = (data.users?.length || data.scores?.length || data.sessions?.length);
+    if (!hasData) return;
+    const existing = db.prepare('SELECT COUNT(*) AS c FROM users').get().c;
+    if (existing > 0) return; // already populated
+    const tx = db.transaction(() => {
+      for (const u of (data.users || [])) {
+        db.prepare('INSERT OR IGNORE INTO users (id, username, passwordHash, createdAt, createdIpHash) VALUES (?, ?, ?, ?, ?)')
+          .run(u.id, u.username, u.passwordHash, u.createdAt ?? Date.now(), u.createdIpHash ?? null);
+      }
+      for (const s of (data.sessions || [])) {
+        db.prepare('INSERT OR IGNORE INTO sessions (token, userId, createdAt, expiresAt) VALUES (?, ?, ?, ?)')
+          .run(s.token, s.userId, s.createdAt ?? Date.now(), s.expiresAt ?? Date.now());
+      }
+      for (const sc of (data.scores || [])) {
+        db.prepare(`INSERT OR IGNORE INTO scores (id, userId, playerName, createdAt, runId, score, distance, evidence, scans, nearMisses, bestCombo, survivalTime, title)
+          VALUES (@id, @userId, @playerName, @createdAt, @runId, @score, @distance, @evidence, @scans, @nearMisses, @bestCombo, @survivalTime, @title)`)
+          .run({ id: sc.id, userId: sc.userId, playerName: sc.playerName, createdAt: sc.createdAt, runId: sc.runId,
+                 score: sc.score, distance: sc.distance ?? 0, evidence: sc.evidence ?? 0, scans: sc.scans ?? 0,
+                 nearMisses: sc.nearMisses ?? 0, bestCombo: sc.bestCombo ?? 0, survivalTime: sc.survivalTime ?? 0, title: sc.title ?? null });
+      }
+      for (const runId of (data.submittedRunIds || [])) {
+        db.prepare('INSERT OR IGNORE INTO submitted_run_ids (runId, createdAt) VALUES (?, ?)').run(runId, Date.now());
+      }
+      for (const [uid, mem] of Object.entries(data.mikuMemories || {})) {
+        db.prepare('INSERT OR REPLACE INTO miku_memories (userId, memory, updatedAt) VALUES (?, ?, ?)').run(uid, JSON.stringify(mem), Date.now());
+      }
+    });
+    tx();
+    console.log(`[auth] migrated ${data.users?.length || 0} users, ${data.scores?.length || 0} scores, ${data.sessions?.length || 0} sessions from legacy JSON`);
   } catch {
-    return defaultDb();
+    // no legacy JSON — fresh DB
   }
+}
+migrateFromJson();
+
+// ---------- prepared statements ----------
+const stmt = {
+  getUserByLowerName: db.prepare('SELECT * FROM users WHERE username = ? COLLATE NOCASE'),
+  insertUser: db.prepare('INSERT INTO users (id, username, passwordHash, createdAt, createdIpHash) VALUES (?, ?, ?, ?, ?)'),
+  getUserById: db.prepare('SELECT * FROM users WHERE id = ?'),
+  deleteExpiredSessions: db.prepare('DELETE FROM sessions WHERE expiresAt <= ?'),
+  getSessionUserRow: db.prepare(`
+    SELECT u.id AS id, u.username AS username, s.token AS token, s.userId AS userId
+    FROM sessions s JOIN users u ON u.id = s.userId
+    WHERE s.token = ? AND s.expiresAt > ?`),
+  insertSession: db.prepare('INSERT INTO sessions (token, userId, createdAt, expiresAt) VALUES (?, ?, ?, ?)'),
+  deleteSessionByToken: db.prepare('DELETE FROM sessions WHERE token = ?'),
+  insertScore: db.prepare(`INSERT INTO scores (id, userId, playerName, createdAt, runId, score, distance, evidence, scans, nearMisses, bestCombo, survivalTime, title)
+    VALUES (@id, @userId, @playerName, @createdAt, @runId, @score, @distance, @evidence, @scans, @nearMisses, @bestCombo, @survivalTime, @title)`),
+  runIdSubmitted: db.prepare('SELECT 1 FROM submitted_run_ids WHERE runId = ?'),
+  insertRunId: db.prepare('INSERT OR IGNORE INTO submitted_run_ids (runId, createdAt) VALUES (?, ?)'),
+  // Per-user best score = row_number()=1 within each userId partition, ranked globally.
+  topScores: db.prepare(`SELECT * FROM (
+    SELECT id, userId, playerName, createdAt, runId, score, distance, evidence, scans, nearMisses, bestCombo, survivalTime, title,
+      ROW_NUMBER() OVER (PARTITION BY userId ORDER BY score DESC, createdAt ASC) AS rn
+    FROM scores) WHERE rn = 1 ORDER BY score DESC, createdAt ASC LIMIT 50`),
+  viewerBest: db.prepare(`SELECT * FROM (
+    SELECT id, userId, playerName, createdAt, runId, score, distance, evidence, scans, nearMisses, bestCombo, survivalTime, title,
+      ROW_NUMBER() OVER (PARTITION BY userId ORDER BY score DESC, createdAt ASC) AS rn
+    FROM scores WHERE userId = ?) WHERE rn = 1`),
+  viewerBestRank: db.prepare(`SELECT COUNT(*) + 1 AS rank FROM (
+    SELECT userId, MAX(score) AS ms, MIN(createdAt) AS mc FROM scores GROUP BY userId
+  ) WHERE ms > ? OR (ms = ? AND mc < ?)`),
+  scoreById: db.prepare('SELECT * FROM scores WHERE id = ?'),
+  getMikuMemory: db.prepare('SELECT memory FROM miku_memories WHERE userId = ?'),
+  upsertMikuMemory: db.prepare('INSERT INTO miku_memories (userId, memory, updatedAt) VALUES (?, ?, ?) ON CONFLICT(userId) DO UPDATE SET memory = excluded.memory, updatedAt = excluded.updatedAt'),
 };
 
-// Serialize DB writes so concurrent read-modify-write cycles don't lose updates.
-// Submit is the high-concurrency path on the leaderboard (H3).
-let writeChain = Promise.resolve();
-const writeDb = (db) => {
-  const run = writeChain.then(async () => {
-    await mkdir(dirname(DATA_PATH), { recursive: true });
-    await writeFile(DATA_PATH, `${JSON.stringify(db, null, 2)}\n`, 'utf8');
-  });
-  // Keep the chain alive even if one write rejects; the caller still sees the error.
-  writeChain = run.catch(() => {});
-  return run;
-};
-
+// ---------- helpers (unchanged from JSON version) ----------
 const readJsonBody = async (req) => {
   let raw = '';
   for await (const chunk of req) raw += chunk;
@@ -59,30 +160,19 @@ const writeJson = (res, status, payload) => {
   res.end(JSON.stringify(payload));
 };
 
-// Number of trusted reverse-proxy hops. 0 = ignore X-Forwarded-For entirely
-// (safe default for direct deployment). Set to the proxy count when deployed
-// behind nginx/Caddy so rate-limiting and PoW bind to the real client IP.
 const TRUSTED_PROXY_HOPS = Math.max(0, Number(process.env.TRUSTED_PROXY_HOPS || '0'));
-
 const getIp = (req) => {
   if (TRUSTED_PROXY_HOPS > 0) {
     const forwarded = req.headers['x-forwarded-for'];
     if (forwarded) {
       const parts = String(Array.isArray(forwarded) ? forwarded[0] : forwarded)
-        .split(',')
-        .map((segment) => segment.trim())
-        .filter(Boolean);
-      // XFF is appended left-to-right; the rightmost entry is the closest proxy.
-      // Skip TRUSTED_PROXY_HOPS trusted proxies from the right; the entry to their
-      // left is the real client. If there aren't enough entries, fall back to the
-      // socket address (un-spoofable) — never parts[0], which is client-forged.
+        .split(',').map((s) => s.trim()).filter(Boolean);
       const clientIndex = parts.length - TRUSTED_PROXY_HOPS - 1;
       if (clientIndex >= 0) return parts[clientIndex] || req.socket.remoteAddress || 'local';
     }
   }
   return req.socket.remoteAddress || 'local';
 };
-
 const hashIp = (ip) => createHash('sha256').update(`ip:${ip}`).digest('hex').slice(0, 24);
 
 const hitRateLimit = (key, limit, windowMs) => {
@@ -95,14 +185,11 @@ const hitRateLimit = (key, limit, windowMs) => {
 };
 
 const sanitizeUsername = (value) => String(value ?? '').trim().replace(/\s+/g, '_').slice(0, 18);
-
 const validateUsername = (username) => /^[\p{L}\p{N}_-]{3,18}$/u.test(username);
-
 const passwordHash = (password, salt = randomBytes(16).toString('hex')) => {
   const hash = pbkdf2Sync(String(password), salt, 210000, 32, 'sha256').toString('hex');
   return `${salt}:${hash}`;
 };
-
 const verifyPassword = (password, stored) => {
   const [salt, expected] = String(stored || '').split(':');
   if (!salt || !expected) return false;
@@ -111,34 +198,28 @@ const verifyPassword = (password, stored) => {
   const right = Buffer.from(expected, 'hex');
   return left.length === right.length && timingSafeEqual(left, right);
 };
-
 const publicUser = (user) => user ? ({ id: user.id, username: user.username }) : null;
-
 const bearerToken = (req) => {
   const header = req.headers.authorization || '';
   const match = String(header).match(/^Bearer\s+(.+)$/i);
   return match?.[1] || '';
 };
 
-const getSessionUser = async (req, db = null) => {
-  const token = bearerToken(req);
-  if (!token) return { db: db ?? await readDb(), user: null, session: null };
-  const loadedDb = db ?? await readDb();
+// ---------- session / auth ----------
+const getSessionUser = (req) => {
   const now = Date.now();
-  loadedDb.sessions = loadedDb.sessions.filter((session) => session.expiresAt > now);
-  const session = loadedDb.sessions.find((item) => item.token === token);
-  const user = session ? loadedDb.users.find((item) => item.id === session.userId) : null;
-  return { db: loadedDb, user, session };
+  stmt.deleteExpiredSessions.run(now);
+  const token = bearerToken(req);
+  if (!token) return { user: null };
+  const row = stmt.getSessionUserRow.get(token, now);
+  if (!row) return { user: null };
+  return { user: { id: row.id, username: row.username } };
 };
 
-const createSession = (db, userId) => {
+const createSession = (userId) => {
   const token = randomBytes(32).toString('base64url');
-  db.sessions.push({
-    token,
-    userId,
-    createdAt: Date.now(),
-    expiresAt: Date.now() + SESSION_TTL_MS,
-  });
+  const now = Date.now();
+  stmt.insertSession.run(token, userId, now, now + SESSION_TTL_MS);
   return token;
 };
 
@@ -147,7 +228,6 @@ const signPayload = (payload) => {
   const sig = createHmac('sha256', SECRET).update(encoded).digest('base64url');
   return `${encoded}.${sig}`;
 };
-
 const verifySignedPayload = (token) => {
   const [encoded, sig] = String(token || '').split('.');
   if (!encoded || !sig) return null;
@@ -155,24 +235,15 @@ const verifySignedPayload = (token) => {
   const left = Buffer.from(sig);
   const right = Buffer.from(expected);
   if (left.length !== right.length || !timingSafeEqual(left, right)) return null;
-  try {
-    return JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'));
-  } catch {
-    return null;
-  }
+  try { return JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')); } catch { return null; }
 };
 
+// ---------- PoW ----------
 const createChallenge = (ipHash) => {
-  const challenge = {
-    nonce: randomBytes(18).toString('base64url'),
-    difficulty: POW_DIFFICULTY,
-    ipHash,
-    expiresAt: Date.now() + 1000 * 60 * 5,
-  };
+  const challenge = { nonce: randomBytes(18).toString('base64url'), difficulty: POW_DIFFICULTY, ipHash, expiresAt: Date.now() + 1000 * 60 * 5 };
   powChallenges.set(challenge.nonce, challenge);
   return challenge;
 };
-
 const verifyChallenge = ({ nonce, answer }, ipHash) => {
   const challenge = powChallenges.get(String(nonce || ''));
   if (!challenge || challenge.expiresAt < Date.now() || challenge.ipHash !== ipHash) return false;
@@ -182,6 +253,7 @@ const verifyChallenge = ({ nonce, answer }, ipHash) => {
   return ok;
 };
 
+// ---------- score validation ----------
 const normalizeSummary = (value) => ({
   score: Math.floor(Number(value?.score) || 0),
   distance: Math.floor(Number(value?.distance) || 0),
@@ -192,7 +264,6 @@ const normalizeSummary = (value) => ({
   survivalTime: Math.floor(Number(value?.survivalTime) || 0),
   title: String(value?.title || '见习调查员').slice(0, 24),
 });
-
 const validateScore = (summary, runPayload) => {
   const now = Date.now();
   const elapsedSeconds = Math.floor((now - Number(runPayload.startAt || 0)) / 1000);
@@ -204,83 +275,50 @@ const validateScore = (summary, runPayload) => {
   if (summary.bestCombo > 999 || summary.evidence > 999 || summary.scans > 999) return 'STAT_TOO_HIGH';
   return '';
 };
-
-// F1: flag scores that pass validateScore but sit near its ceiling. Accepted, logged for review.
-// Full server-authoritative anti-cheat is a larger follow-up (see GSTACK_AUDIT.md F1).
 const isScoreSuspicious = (summary) => {
   const ceiling = summary.survivalTime * 4200 + summary.distance * 90 + 60000;
   return summary.score > ceiling * 0.7;
 };
 
-// H3: serialize read-modify-write critical sections so concurrent ops don't lose updates.
-let dbMutex = Promise.resolve();
-const withDbMutex = (fn) => {
-  const result = dbMutex.then(fn, fn);
-  dbMutex = result.catch(() => {});
-  return result;
-};
-
-const bestScoresByPlayer = (db) => {
-  const bestByUser = new Map();
-  for (const entry of db.scores) {
-    const key = entry.userId || entry.playerName || entry.id;
-    const current = bestByUser.get(key);
-    if (
-      !current
-      || entry.score > current.score
-      || (entry.score === current.score && entry.createdAt < current.createdAt)
-    ) {
-      bestByUser.set(key, entry);
-    }
-  }
-  return [...bestByUser.values()];
-};
-
-const rankedScores = (db) => bestScoresByPlayer(db)
-  .sort((a, b) => b.score - a.score || a.createdAt - b.createdAt)
-  .map((entry, index) => ({
-    ...entry,
-    rank: index + 1,
-    createdAt: new Date(entry.createdAt).toISOString(),
-  }));
-
-const topScores = (db) => rankedScores(db).slice(0, 50);
-
-const userBestScore = (db, userId) => rankedScores(db).find((entry) => entry.userId === userId) || null;
-
-const cleanText = (value, maxLength = 700) => String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, maxLength);
-
-const emptyMikuMemory = () => ({
-  version: 1,
-  sessionCount: 0,
-  sessions: [],
+// ---------- ranking (read helpers) ----------
+const scoreRowToEntry = (row) => ({
+  id: row.id, userId: row.userId, playerName: row.playerName,
+  createdAt: new Date(row.createdAt).toISOString(),
+  rank: row.rank ?? null,
+  score: row.score, distance: row.distance, evidence: row.evidence, scans: row.scans,
+  nearMisses: row.nearMisses, bestCombo: row.bestCombo, survivalTime: row.survivalTime, title: row.title,
 });
+const topScores = () => {
+  const rows = stmt.topScores.all();
+  return rows.map((row, i) => scoreRowToEntry({ ...row, rank: i + 1 }));
+};
+const userBestScore = (userId) => {
+  const best = stmt.viewerBest.get(userId);
+  if (!best) return null;
+  const rankRow = stmt.viewerBestRank.get(best.score, best.score, best.createdAt);
+  return scoreRowToEntry({ ...best, rank: rankRow.rank });
+};
 
+// ---------- miku memory sanitize (unchanged) ----------
+const cleanText = (value, maxLength = 700) => String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, maxLength);
+const emptyMikuMemory = () => ({ version: 1, sessionCount: 0, sessions: [] });
 const sanitizeMikuMessages = (messages) => {
   if (!Array.isArray(messages)) return [];
   return messages
-    .filter((message) => message && (message.role === 'user' || message.role === 'assistant') && cleanText(message.content))
-    .slice(-80)
-    .map((message) => ({
-      role: message.role,
-      content: cleanText(message.content),
-    }));
+    .filter((m) => m && (m.role === 'user' || m.role === 'assistant') && cleanText(m.content))
+    .slice(-80).map((m) => ({ role: m.role, content: cleanText(m.content) }));
 };
-
 const sanitizeMikuTopic = (topic, fallbackId) => {
   const title = cleanText(topic?.title, 80);
   const summary = cleanText(topic?.summary, 260);
   if (!title || !summary) return null;
   return {
-    id: cleanText(topic?.id, 100) || fallbackId,
-    title,
-    summary,
-    keywords: Array.isArray(topic?.keywords) ? topic.keywords.slice(0, 8).map((keyword) => cleanText(keyword, 40)).filter(Boolean) : [],
+    id: cleanText(topic?.id, 100) || fallbackId, title, summary,
+    keywords: Array.isArray(topic?.keywords) ? topic.keywords.slice(0, 8).map((k) => cleanText(k, 40)).filter(Boolean) : [],
     startIndex: Number.isInteger(topic?.startIndex) ? topic.startIndex : undefined,
     endIndex: Number.isInteger(topic?.endIndex) ? topic.endIndex : undefined,
   };
 };
-
 const sanitizeMikuMemory = (memory) => {
   if (!memory || typeof memory !== 'object') return emptyMikuMemory();
   const sessions = Array.isArray(memory.sessions) ? memory.sessions.map((session) => {
@@ -289,13 +327,9 @@ const sanitizeMikuMemory = (memory) => {
     const messages = sanitizeMikuMessages(session?.messages);
     if (!id || !createdAt || messages.length === 0) return null;
     return {
-      id,
-      createdAt,
-      messages,
+      id, createdAt, messages,
       sessionSummary: cleanText(session?.sessionSummary, 360) || undefined,
-      topics: Array.isArray(session?.topics)
-        ? session.topics.slice(0, 10).map((topic, index) => sanitizeMikuTopic(topic, `${id}-topic-${index + 1}`)).filter(Boolean)
-        : [],
+      topics: Array.isArray(session?.topics) ? session.topics.slice(0, 10).map((t, i) => sanitizeMikuTopic(t, `${id}-topic-${i + 1}`)).filter(Boolean) : [],
       taggedTranscript: cleanText(session?.taggedTranscript, 8000) || undefined,
     };
   }).filter(Boolean) : [];
@@ -305,62 +339,48 @@ const sanitizeMikuMemory = (memory) => {
     version: 1,
     sessionCount: Math.max(Number(memory.sessionCount) || sessions.length, sessions.length),
     sessions,
-    knowledge: knowledgeContent ? {
-      content: knowledgeContent,
-      updatedAt: cleanText(memory.knowledge?.updatedAt, 60) || new Date().toISOString(),
-      sourceSessionIds: Array.isArray(memory.knowledge?.sourceSessionIds)
-        ? memory.knowledge.sourceSessionIds.slice(-12).map((id) => cleanText(id, 100)).filter(Boolean)
-        : [],
-    } : undefined,
-    pendingGreeting: pendingGreeting ? {
-      content: pendingGreeting,
-      generatedAt: cleanText(memory.pendingGreeting?.generatedAt, 60) || new Date().toISOString(),
-      sourceSessionId: cleanText(memory.pendingGreeting?.sourceSessionId, 100),
-    } : undefined,
+    knowledge: knowledgeContent ? { content: knowledgeContent, updatedAt: cleanText(memory.knowledge?.updatedAt, 60) || new Date().toISOString(), sourceSessionIds: Array.isArray(memory.knowledge?.sourceSessionIds) ? memory.knowledge.sourceSessionIds.slice(-12).map((id) => cleanText(id, 100)).filter(Boolean) : [] } : undefined,
+    pendingGreeting: pendingGreeting ? { content: pendingGreeting, generatedAt: cleanText(memory.pendingGreeting?.generatedAt, 60) || new Date().toISOString(), sourceSessionId: cleanText(memory.pendingGreeting?.sourceSessionId, 100) } : undefined,
   };
 };
-
 const mergeMikuMemories = (current, incoming, options = {}) => {
   const safeCurrent = sanitizeMikuMemory(current);
   const safeIncoming = sanitizeMikuMemory(incoming);
   const sessionsById = new Map();
-  [...safeCurrent.sessions, ...safeIncoming.sessions].forEach((session) => {
-    sessionsById.set(session.id, session);
-  });
+  [...safeCurrent.sessions, ...safeIncoming.sessions].forEach((s) => sessionsById.set(s.id, s));
   const sessions = [...sessionsById.values()].sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
-  const currentKnowledgeTime = Date.parse(safeCurrent.knowledge?.updatedAt || '') || 0;
-  const incomingKnowledgeTime = Date.parse(safeIncoming.knowledge?.updatedAt || '') || 0;
+  const cur = Date.parse(safeCurrent.knowledge?.updatedAt || '') || 0;
+  const inc = Date.parse(safeIncoming.knowledge?.updatedAt || '') || 0;
   return {
     version: 1,
     sessionCount: Math.max(safeCurrent.sessionCount, safeIncoming.sessionCount, sessions.length),
     sessions,
-    knowledge: incomingKnowledgeTime >= currentKnowledgeTime ? (safeIncoming.knowledge || safeCurrent.knowledge) : (safeCurrent.knowledge || safeIncoming.knowledge),
+    knowledge: inc >= cur ? (safeIncoming.knowledge || safeCurrent.knowledge) : (safeCurrent.knowledge || safeIncoming.knowledge),
     pendingGreeting: options.clearPendingGreeting ? undefined : (safeIncoming.pendingGreeting || safeCurrent.pendingGreeting),
   };
 };
 
+// ---------- handlers ----------
 export const handleMikuMemoryRequest = async (req, res) => {
   try {
-    const { db, user } = await getSessionUser(req);
+    const { user } = getSessionUser(req);
     if (!user) return writeJson(res, 401, { error: 'LOGIN_REQUIRED' });
-    db.mikuMemories = db.mikuMemories && typeof db.mikuMemories === 'object' ? db.mikuMemories : {};
 
     if (req.method === 'GET') {
-      await writeDb(db);
-      return writeJson(res, 200, { memory: sanitizeMikuMemory(db.mikuMemories[user.id]) });
+      const row = stmt.getMikuMemory.get(user.id);
+      const memory = row ? JSON.parse(row.memory) : emptyMikuMemory();
+      return writeJson(res, 200, { memory: sanitizeMikuMemory(memory) });
     }
-
     if (req.method === 'PUT' || req.method === 'POST') {
       const body = await readJsonBody(req);
       const incoming = sanitizeMikuMemory(body.memory);
       const mode = cleanText(body.mode, 20);
-      db.mikuMemories[user.id] = mode === 'replace'
-        ? incoming
-        : mergeMikuMemories(db.mikuMemories[user.id], incoming, { clearPendingGreeting: Boolean(body.clearPendingGreeting) });
-      await writeDb(db);
-      return writeJson(res, 200, { memory: sanitizeMikuMemory(db.mikuMemories[user.id]) });
+      const row = stmt.getMikuMemory.get(user.id);
+      const current = row ? JSON.parse(row.memory) : emptyMikuMemory();
+      const next = mode === 'replace' ? incoming : mergeMikuMemories(current, incoming, { clearPendingGreeting: Boolean(body.clearPendingGreeting) });
+      stmt.upsertMikuMemory.run(user.id, JSON.stringify(next), Date.now());
+      return writeJson(res, 200, { memory: sanitizeMikuMemory(next) });
     }
-
     return writeJson(res, 405, { error: 'METHOD_NOT_ALLOWED' });
   } catch (error) {
     console.error('[auth] miku-memory error', error);
@@ -388,18 +408,13 @@ export const handleAuthRequest = async (req, res) => {
       if (!validateUsername(username)) return writeJson(res, 400, { error: 'BAD_USERNAME' });
       if (password.length < 8 || password.length > 80) return writeJson(res, 400, { error: 'BAD_PASSWORD' });
 
-      const db = await readDb();
-      if (db.users.some((user) => user.username.toLowerCase() === username.toLowerCase())) return writeJson(res, 409, { error: 'USERNAME_TAKEN' });
-      const user = {
-        id: randomBytes(12).toString('base64url'),
-        username,
-        passwordHash: passwordHash(password),
-        createdAt: Date.now(),
-        createdIpHash: ipHash,
-      };
-      db.users.push(user);
-      const token = createSession(db, user.id);
-      await writeDb(db);
+      if (stmt.getUserByLowerName.get(username)) return writeJson(res, 409, { error: 'USERNAME_TAKEN' });
+      const user = { id: randomBytes(12).toString('base64url'), username, passwordHash: passwordHash(password), createdAt: Date.now(), createdIpHash: ipHash };
+      const tx = db.transaction(() => {
+        stmt.insertUser.run(user.id, user.username, user.passwordHash, user.createdAt, user.createdIpHash);
+      });
+      tx();
+      const token = createSession(user.id);
       return writeJson(res, 200, { token, user: publicUser(user) });
     }
 
@@ -407,24 +422,20 @@ export const handleAuthRequest = async (req, res) => {
       const body = await readJsonBody(req);
       const username = sanitizeUsername(body.username);
       if (hitRateLimit(`login:${ipHash}:${username.toLowerCase()}`, 8, 10 * 60 * 1000)) return writeJson(res, 429, { error: 'LOGIN_RATE_LIMITED' });
-      const db = await readDb();
-      const user = db.users.find((item) => item.username.toLowerCase() === username.toLowerCase());
+      const user = stmt.getUserByLowerName.get(username);
       if (!user || !verifyPassword(body.password, user.passwordHash)) return writeJson(res, 401, { error: 'BAD_CREDENTIALS' });
-      const token = createSession(db, user.id);
-      await writeDb(db);
+      const token = createSession(user.id);
       return writeJson(res, 200, { token, user: publicUser(user) });
     }
 
     if (path === '/logout' && req.method === 'POST') {
-      const { db, session } = await getSessionUser(req);
-      if (session) db.sessions = db.sessions.filter((item) => item.token !== session.token);
-      await writeDb(db);
+      const token = bearerToken(req);
+      if (token) stmt.deleteSessionByToken.run(token);
       return writeJson(res, 200, { ok: true });
     }
 
     if (path === '/me' && req.method === 'GET') {
-      const { db, user } = await getSessionUser(req);
-      await writeDb(db);
+      const { user } = getSessionUser(req);
       return writeJson(res, 200, { user: publicUser(user) });
     }
 
@@ -437,12 +448,8 @@ export const handleAuthRequest = async (req, res) => {
 
 export const handleRunStartRequest = async (req, res) => {
   if (req.method !== 'POST') return writeJson(res, 405, { error: 'METHOD_NOT_ALLOWED' });
-  const { user } = await getSessionUser(req);
-  const payload = {
-    runId: randomBytes(14).toString('base64url'),
-    startAt: Date.now(),
-    userId: user?.id,
-  };
+  const { user } = getSessionUser(req);
+  const payload = { runId: randomBytes(14).toString('base64url'), startAt: Date.now(), userId: user?.id };
   return writeJson(res, 200, { runToken: signPayload(payload), runId: payload.runId });
 };
 
@@ -450,15 +457,13 @@ export const handleLeaderboardRequest = async (req, res) => {
   try {
     const path = new URL(req.url || '/', 'http://local').pathname;
     if ((path === '/' || path === '/api/leaderboard') && req.method === 'GET') {
-      const db = await readDb();
-      const { user } = await getSessionUser(req, db);
-      return writeJson(res, 200, { entries: topScores(db), viewerBest: user ? userBestScore(db, user.id) : null });
+      const { user } = getSessionUser(req);
+      return writeJson(res, 200, { entries: topScores(), viewerBest: user ? userBestScore(user.id) : null });
     }
 
     if ((path === '/submit' || path === '/api/leaderboard/submit') && req.method === 'POST') {
-      const { user } = await getSessionUser(req);
+      const { user } = getSessionUser(req);
       if (!user) return writeJson(res, 401, { error: 'LOGIN_REQUIRED' });
-      // F1 anti-cheat (rate): cap submissions per user to blunt scripted flooding.
       if (hitRateLimit(`submit:${user.id}`, 10, 60 * 1000)) return writeJson(res, 429, { error: 'SUBMIT_RATE_LIMITED' });
       const body = await readJsonBody(req);
       const runPayload = verifySignedPayload(body.runToken);
@@ -468,37 +473,32 @@ export const handleLeaderboardRequest = async (req, res) => {
       const scoreError = validateScore(summary, runPayload);
       if (scoreError) return writeJson(res, 400, { error: scoreError });
 
-      // H3: re-read the latest DB under a mutex so concurrent submits can't
-      // overwrite each other's new entry. runId replay is checked on the freshest data.
-      const outcome = await withDbMutex(async () => {
-        const freshDb = await readDb();
-        if (freshDb.submittedRunIds.includes(runPayload.runId)) return { status: 409 };
-
-        // F1 anti-cheat (review): scores near the validation ceiling are accepted but flagged.
+      // Single transaction: replay check + insert score + record runId. SQLite's
+      // writer lock serializes this atomically — replaces the old withDbMutex.
+      const entry = {
+        id: randomBytes(12).toString('base64url'),
+        userId: user.id, playerName: user.username,
+        createdAt: Date.now(), runId: runPayload.runId,
+        ...summary,
+      };
+      let outcome;
+      const tx = db.transaction(() => {
+        if (stmt.runIdSubmitted.get(runPayload.runId)) return { status: 409 };
         if (isScoreSuspicious(summary)) {
           console.warn('[leaderboard] suspicious score', { user: user.id, runId: runPayload.runId, score: summary.score, survivalTime: summary.survivalTime, distance: summary.distance });
         }
-
-        const entry = {
-          id: randomBytes(12).toString('base64url'),
-          userId: user.id,
-          playerName: user.username,
-          createdAt: Date.now(),
-          runId: runPayload.runId,
-          ...summary,
-        };
-        freshDb.scores.push(entry);
-        freshDb.submittedRunIds.push(runPayload.runId);
-        freshDb.submittedRunIds = freshDb.submittedRunIds.slice(-5000);
-        freshDb.scores = freshDb.scores.sort((a, b) => b.score - a.score).slice(0, 500);
-        await writeDb(freshDb);
-        const viewerBest = userBestScore(freshDb, user.id);
-        const submittedEntry = rankedScores(freshDb).find((item) => item.id === entry.id) || { ...entry, rank: viewerBest?.rank, createdAt: new Date(entry.createdAt).toISOString() };
-        return { status: 200, entry: submittedEntry, entries: topScores(freshDb), viewerBest };
+        stmt.insertScore.run(entry);
+        stmt.insertRunId.run(runPayload.runId, Date.now());
+        return { status: 200 };
       });
-
+      outcome = tx();
       if (outcome.status === 409) return writeJson(res, 409, { error: 'RUN_ALREADY_SUBMITTED' });
-      return writeJson(res, 200, { entry: outcome.entry, entries: outcome.entries, viewerBest: outcome.viewerBest });
+
+      const entries = topScores();
+      const viewerBest = userBestScore(user.id);
+      const submittedEntry = entries.find((e) => e.id === entry.id)
+        || { ...scoreRowToEntry({ ...entry }), rank: viewerBest?.rank };
+      return writeJson(res, 200, { entry: submittedEntry, entries, viewerBest });
     }
 
     return writeJson(res, 404, { error: 'NOT_FOUND' });
