@@ -1104,17 +1104,26 @@ const TypewriterEffect: React.FC<{ text: string[], onComplete: () => void }> = (
 const isPhoneOrIpad = () => {
   if (typeof navigator === 'undefined') return false;
   const ua = navigator.userAgent;
-  const maxTouchPoints = navigator.maxTouchPoints || 0;
   const platform = navigator.platform || '';
-  const isPhone = /iPhone|iPod|Android.*Mobile|Windows Phone/i.test(ua);
-  const isIpad = /iPad/i.test(ua) || (platform === 'MacIntel' && maxTouchPoints > 1);
-  return maxTouchPoints > 0 && (isPhone || isIpad);
+  const maxTouchPoints = navigator.maxTouchPoints || 0;
+  // UA-agnostic touch-primary-device signal — catches Edge mobile and any browser
+  // whose UA we didn't enumerate (previously missed Edge Android/iOS).
+  const coarsePointer = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+    && window.matchMedia('(pointer: coarse)').matches;
+  // UA fallbacks: Android (Edge Android UA sometimes lacks "Mobile"), iPadOS (spoofs Mac).
+  const isMobileUA = /iPhone|iPad|iPod|Android|Windows Phone|Mobile/i.test(ua);
+  const isIpadOS = platform === 'MacIntel' && maxTouchPoints > 1;
+  return coarsePointer || (maxTouchPoints > 0 && (isMobileUA || isIpadOS));
 };
 
 const isSafariBrowser = () => {
+  // iOS Safari only (was: any Safari, which wrongly gated desktop Safari out of
+  // leaderboard/BGM). iPadOS 13+ spoofs Mac UA, so detect via touch points too.
   if (typeof navigator === 'undefined') return false;
   const ua = navigator.userAgent;
-  return /Safari/i.test(ua) && !/Chrome|Chromium|CriOS|FxiOS|Edg|OPR|Android/i.test(ua);
+  const isIOS = /iPhone|iPad|iPod/i.test(ua);
+  const isIpadOS = /Macintosh/i.test(ua) && (navigator.maxTouchPoints || 0) > 1;
+  return isIOS || isIpadOS;
 };
 
 const App: React.FC = () => {
@@ -1832,7 +1841,7 @@ const App: React.FC = () => {
           <GameCanvas 
           gameState={gameState} setGameState={setGameState} 
           setDialogContent={setDialogLines} setDialogImage={setDialogImage}
-          onGameOver={(summary) => { gameAudio.stopMusic(); setIsRunMusicReady(false); if (activeNpcChat) finalizeMikuChatMemory(activeNpcChat); setActiveNpcChat(null); recordRun(summary); setGameState('MENU'); setIsGameOver(true); setIntroComplete(true); }}
+          onGameOver={(summary) => { setTimeout(() => gameAudio.stopMusic(), 0); setIsRunMusicReady(false); if (activeNpcChat) finalizeMikuChatMemory(activeNpcChat); setActiveNpcChat(null); recordRun(summary); setGameState('MENU'); setIsGameOver(true); setIntroComplete(true); }}
           onWin={() => { setGameState('ENDING'); setDialogLines(LYRICS.ending); setDialogImage(IDLE_SPRITE_URLS[0]); }}
           onRunIntroStart={() => {
             void gameAudio.unlock();
@@ -1998,19 +2007,19 @@ const App: React.FC = () => {
 
       {gameState === 'PLAYING' && isMobile && (
         <div className="absolute inset-0 pointer-events-none z-30 touch-none select-none [-webkit-tap-highlight-color:transparent]">
-          <div className="absolute bottom-8 left-7 w-44 h-44 pointer-events-auto opacity-70 active:opacity-95 transition-opacity">
+          <div className="absolute bottom-[calc(env(safe-area-inset-bottom)+0.75rem)] left-[calc(env(safe-area-inset-left)+0.5rem)] w-[clamp(120px,26vw,176px)] h-[clamp(120px,26vw,176px)] pointer-events-auto opacity-70 active:opacity-95 transition-opacity">
               <button aria-label="跳跃" className="absolute top-0 left-1/3 w-1/3 h-1/3 rounded-t-2xl touch-control-button" onTouchStart={(e) => handleTouchStart('up', e)} onTouchEnd={(e) => handleTouchEnd('up', e)} onTouchCancel={(e) => handleTouchEnd('up', e)} onContextMenu={preventCtx}>▲</button>
               <button aria-label="下蹲" className="absolute bottom-0 left-1/3 w-1/3 h-1/3 rounded-b-2xl touch-control-button" onTouchStart={(e) => handleTouchStart('down', e)} onTouchEnd={(e) => handleTouchEnd('down', e)} onTouchCancel={(e) => handleTouchEnd('down', e)} onContextMenu={preventCtx}>▼</button>
               <button aria-label="左移" className="absolute top-1/3 left-0 w-1/3 h-1/3 rounded-l-2xl touch-control-button" onTouchStart={(e) => handleTouchStart('left', e)} onTouchEnd={(e) => handleTouchEnd('left', e)} onTouchCancel={(e) => handleTouchEnd('left', e)} onContextMenu={preventCtx}>◀</button>
               <button aria-label="右移" className="absolute top-1/3 right-0 w-1/3 h-1/3 rounded-r-2xl touch-control-button" onTouchStart={(e) => handleTouchStart('right', e)} onTouchEnd={(e) => handleTouchEnd('right', e)} onTouchCancel={(e) => handleTouchEnd('right', e)} onContextMenu={preventCtx}>▶</button>
           </div>
-          <div className="absolute bottom-8 right-7 flex gap-4 pointer-events-auto opacity-75 active:opacity-100 transition-opacity items-end text-white">
-             <button aria-label="互动" className="w-16 h-16 rounded-full touch-control-button font-bold text-lg flex items-center justify-center mb-10 text-yellow-100" onTouchStart={(e) => handleTouchStart('interact', e)} onTouchEnd={(e) => handleTouchEnd('interact', e)} onTouchCancel={(e) => handleTouchEnd('interact', e)} onContextMenu={preventCtx}>E</button>
+          <div className="absolute bottom-[calc(env(safe-area-inset-bottom)+0.75rem)] right-[calc(env(safe-area-inset-right)+0.5rem)] flex gap-[clamp(0.5rem,1.5vw,1rem)] pointer-events-auto opacity-75 active:opacity-100 transition-opacity items-end text-white">
+             <button aria-label="互动" className="w-[clamp(48px,11vw,64px)] h-[clamp(48px,11vw,64px)] rounded-full touch-control-button font-bold text-lg flex items-center justify-center mb-[clamp(1.5rem,4vw,2.5rem)] text-yellow-100" onTouchStart={(e) => handleTouchStart('interact', e)} onTouchEnd={(e) => handleTouchEnd('interact', e)} onTouchCancel={(e) => handleTouchEnd('interact', e)} onContextMenu={preventCtx}>E</button>
              <div className="flex flex-col gap-5">
-               <button aria-label="行动" className="w-24 h-24 rounded-full touch-control-button font-bold text-3xl flex items-center justify-center text-cyan-50" onTouchStart={(e) => handleTouchStart('action', e)} onTouchEnd={(e) => handleTouchEnd('action', e)} onTouchCancel={(e) => handleTouchEnd('action', e)} onContextMenu={preventCtx}>●</button>
+               <button aria-label="跳跃" className="w-[clamp(64px,15vw,96px)] h-[clamp(64px,15vw,96px)] rounded-full touch-control-button font-bold text-3xl flex items-center justify-center text-cyan-50" onTouchStart={(e) => handleTouchStart('up', e)} onTouchEnd={(e) => handleTouchEnd('up', e)} onTouchCancel={(e) => handleTouchEnd('up', e)} onContextMenu={preventCtx}>跳</button>
                <div className="flex gap-4">
-                 <button aria-label="冲刺" className="w-20 h-20 rounded-full touch-control-button font-bold text-xl flex items-center justify-center text-blue-100" onTouchStart={(e) => handleTouchStart('dash', e)} onTouchEnd={(e) => handleTouchEnd('dash', e)} onTouchCancel={(e) => handleTouchEnd('dash', e)} onContextMenu={preventCtx}>D</button>
-                 <button aria-label="攻击" className="w-20 h-20 rounded-full touch-control-button font-bold text-xl flex items-center justify-center text-rose-100" onTouchStart={(e) => handleTouchStart('attack', e)} onTouchEnd={(e) => handleTouchEnd('attack', e)} onTouchCancel={(e) => handleTouchEnd('attack', e)} onContextMenu={preventCtx}>F</button>
+                 <button aria-label="冲刺" className="w-[clamp(56px,13vw,80px)] h-[clamp(56px,13vw,80px)] rounded-full touch-control-button font-bold text-xl flex items-center justify-center text-blue-100" onTouchStart={(e) => handleTouchStart('dash', e)} onTouchEnd={(e) => handleTouchEnd('dash', e)} onTouchCancel={(e) => handleTouchEnd('dash', e)} onContextMenu={preventCtx}>D</button>
+                 <button aria-label="攻击" className="w-[clamp(56px,13vw,80px)] h-[clamp(56px,13vw,80px)] rounded-full touch-control-button font-bold text-xl flex items-center justify-center text-rose-100" onTouchStart={(e) => handleTouchStart('attack', e)} onTouchEnd={(e) => handleTouchEnd('attack', e)} onTouchCancel={(e) => handleTouchEnd('attack', e)} onContextMenu={preventCtx}>F</button>
                </div>
              </div>
           </div>
