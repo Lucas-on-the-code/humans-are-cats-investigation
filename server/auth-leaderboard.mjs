@@ -290,7 +290,11 @@ const normalizeSummary = (value) => ({
 // Returns '' if OK, or an error code string if the score doesn't add up.
 const replayScore = (events, summary, runPayload) => {
   if (!Array.isArray(events)) return 'NO_EVENTS';
-  if (events.length > 6000) return 'TOO_MANY_EVENTS';
+  // Intentionally NO event-count cap. A legitimate endurance run can last a long
+  // time and pile up many events — any fixed ceiling would eventually reject a
+  // new legitimate record. Score-inflation fraud is caught by the SCORE_MISMATCH
+  // tolerance below; absurd payloads are bounded by the HTTP body-size limit at
+  // the reverse proxy (nginx client_max_body_size), not here.
   if (events.length === 0 && summary.score > 0) return 'SCORE_MISMATCH';
 
   let replayedScore = 0;
@@ -319,11 +323,18 @@ const replayScore = (events, summary, runPayload) => {
     replayedScore += Math.round(base * mult);
   }
 
-  // Add distance-based score (not tracked as discrete events; estimated from summary)
-  // Distance score = distance_m * (18 + heat*20). heat ramps 0→1 over first ~300m.
-  // For long runs heat≈1 so use 32 as midpoint estimate. Tolerance covers the rest.
-  const distScorePerM = summary.distance > 300 ? 36 : 24;
-  replayedScore += Math.round(summary.distance * distScorePerM);
+  // Add distance-based score (not tracked as discrete events; estimated from summary).
+  // Client awards distance score continuously: per metre = (18 + heat*20), where
+  // heat = min(1, distance_px / (CHUNK_LENGTH*18)). CHUNK_LENGTH=760px, PIXELS_PER_METER=100
+  // → heat saturates at 136.8m. We mirror that exact piecewise integral instead of a
+  // flat per-metre guess, so the only residual error is client frame-discretisation
+  // noise (a few tens of points), well inside tolerance.
+  const HEAT_FULL_M = 136.8;
+  const D = summary.distance;
+  const distScore = D <= HEAT_FULL_M
+    ? 18 * D + (10 / HEAT_FULL_M) * D * D            // ∫₀ᴰ (18 + 20·d/H) dd
+    : 28 * HEAT_FULL_M + (D - HEAT_FULL_M) * 38;     // ramp region + saturated (38/m)
+  replayedScore += Math.round(distScore);
 
   // Add freeride bonus
   if (taxiRides >= TAXI_FREERIDE_THRESHOLD_REPLAY) {
@@ -545,15 +556,19 @@ export const handleLeaderboardRequest = async (req, res) => {
       const body = await readJsonBody(req);
       const runPayload = verifySignedPayload(body.runToken);
       const summary = normalizeSummary(body.summary);
-      if (!runPayload) return writeJson(res, 400, { error: 'BAD_RUN_TOKEN' });
+      const events = Array.isArray(body.events) ? body.events : [];
+      // Diagnostic snapshot logged on every rejection — without this we cannot
+      // tell which anti-cheat layer killed a legitimate score (validateScore and
+      // replayScore return only an error code, so prod logs were blind).
+      const diag = { user: user.id, runId: runPayload?.runId, score: summary.score, distance: summary.distance, survivalTime: summary.survivalTime, bestCombo: summary.bestCombo, events: events.length };
+      if (!runPayload) { console.warn('[leaderboard] reject BAD_RUN_TOKEN', diag); return writeJson(res, 400, { error: 'BAD_RUN_TOKEN' }); }
       if (runPayload.userId && runPayload.userId !== user.id) return writeJson(res, 403, { error: 'RUN_USER_MISMATCH' });
       const scoreError = validateScore(summary, runPayload);
-      if (scoreError) return writeJson(res, 400, { error: scoreError });
+      if (scoreError) { console.warn('[leaderboard] reject ' + scoreError, diag); return writeJson(res, 400, { error: scoreError }); }
 
       // Replay-based anti-cheat: verify the score event log matches the claimed score
-      const events = Array.isArray(body.events) ? body.events : [];
       const replayError = replayScore(events, summary, runPayload);
-      if (replayError) return writeJson(res, 400, { error: replayError });
+      if (replayError) { console.warn('[leaderboard] reject ' + replayError, diag); return writeJson(res, 400, { error: replayError }); }
 
       // Single transaction: replay check + insert score + record runId. SQLite's
       // writer lock serializes this atomically — replaces the old withDbMutex.
