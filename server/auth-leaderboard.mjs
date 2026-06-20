@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { readFileSync, appendFileSync, statSync, unlinkSync } from 'node:fs';
+import { readFileSync, appendFileSync, statSync, writeFileSync } from 'node:fs';
 import { createHmac, pbkdf2Sync, randomBytes, timingSafeEqual, createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -294,8 +294,20 @@ const REJECT_DUMP_PATH = process.env.GAME_REJECT_DUMP || join(fileURLToPath(new 
 const REJECT_DUMP_MAX_BYTES = 20 * 1024 * 1024;
 const dumpRejectedRun = (errorCode, diag, events) => {
   try {
-    try { if (statSync(REJECT_DUMP_PATH).size > REJECT_DUMP_MAX_BYTES) unlinkSync(REJECT_DUMP_PATH); } catch {}
     appendFileSync(REJECT_DUMP_PATH, JSON.stringify({ at: new Date().toISOString(), errorCode, ...diag, events }) + '\n');
+    // Trim AFTER the append — checking size first is a check-then-act race under
+    // concurrent writers (all pass the guard, all append, file blows past the cap).
+    // Keep the most recent half, line-aligned, so fresh diagnostic data survives
+    // rotation instead of being wiped wholesale (we don't want to lose the very
+    // case we're trying to capture).
+    try {
+      const { size } = statSync(REJECT_DUMP_PATH);
+      if (size > REJECT_DUMP_MAX_BYTES) {
+        const data = readFileSync(REJECT_DUMP_PATH, 'utf8');
+        const cut = data.indexOf('\n', size - Math.floor(REJECT_DUMP_MAX_BYTES / 2));
+        writeFileSync(REJECT_DUMP_PATH, cut >= 0 ? data.slice(cut + 1) : data);
+      }
+    } catch {}
   } catch (e) { console.warn('[leaderboard] reject-dump failed', e.message); }
 };
 
