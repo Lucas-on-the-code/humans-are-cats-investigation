@@ -52,6 +52,10 @@ export const zh: Record<string, string> = {
   'auth.error.rateLimited': '注册太频繁了，稍等一会再试',
   'auth.error.badCredentials': '用户名或密码不对',
   'auth.error.generic': '账号请求失败，等一下再试',
+  'auth.error.powRequired': '验证超时，请重新注册',
+  'auth.error.challengeFailed': '网络不稳定，请重试',
+  'auth.error.powTimeout': '设备计算超时，请刷新页面重试',
+  'auth.error.tooManyChallenges': '操作太频繁，请稍等再试',
   // upload
   'upload.error.noToken': '这一局没有拿到服务端令牌，不能上传到全球榜',
   'upload.uploading': '正在上传成绩...',

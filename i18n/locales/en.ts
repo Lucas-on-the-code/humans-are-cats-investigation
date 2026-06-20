@@ -52,6 +52,10 @@ export const en: Record<string, string> = {
   'auth.error.rateLimited': 'Registering too frequently, try again later',
   'auth.error.badCredentials': 'Wrong username or password',
   'auth.error.generic': 'Account request failed, try again later',
+  'auth.error.powRequired': 'Verification timed out, please re-register',
+  'auth.error.challengeFailed': 'Network unstable, please retry',
+  'auth.error.powTimeout': 'Device computation timed out, please refresh and retry',
+  'auth.error.tooManyChallenges': 'Too many attempts, please wait and retry',
   // upload
   'upload.error.noToken': 'No server token this run — score not uploaded',
   'upload.uploading': 'Uploading score...',

@@ -1342,7 +1342,15 @@ const App: React.FC = () => {
               ? t('auth.error.rateLimited')
               : message === 'BAD_CREDENTIALS'
                 ? t('auth.error.badCredentials')
-                : t('auth.error.generic');
+                : message === 'POW_REQUIRED'
+                  ? t('auth.error.powRequired')
+                  : message === 'CHALLENGE_FAILED'
+                    ? t('auth.error.challengeFailed')
+                    : message === 'POW_TIMEOUT'
+                      ? t('auth.error.powTimeout')
+                      : message === 'TOO_MANY_CHALLENGES'
+                        ? t('auth.error.tooManyChallenges')
+                        : t('auth.error.generic');
       setAuthMessage(friendly);
     } finally {
       setAuthBusy(false);

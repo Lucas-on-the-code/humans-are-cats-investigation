@@ -12,7 +12,7 @@ const DB_FILE = JSON_LEGACY_PATH.replace(/\.json$/i, '.sqlite');
 
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
 const RUN_TTL_MS = 1000 * 60 * 60 * 2;
-const POW_DIFFICULTY = 4;
+const POW_DIFFICULTY = 3;
 const SECRET = process.env.GAME_SERVER_SECRET || (() => {
   console.warn('[auth] GAME_SERVER_SECRET not set — using an ephemeral random secret. Set GAME_SERVER_SECRET in production; server.mjs enforces it on boot.');
   return randomBytes(32).toString('hex');
@@ -162,12 +162,17 @@ const writeJson = (res, status, payload) => {
 
 const TRUSTED_PROXY_HOPS = Math.max(0, Number(process.env.TRUSTED_PROXY_HOPS || '0'));
 const getIp = (req) => {
+  // Prefer X-Real-IP (set by nginx to $remote_addr) — simpler and correct
+  // for single-proxy setups where X-Forwarded-For has only one entry.
+  const realIp = req.headers['x-real-ip'];
+  if (realIp) return String(realIp).trim() || req.socket.remoteAddress || 'local';
+
   if (TRUSTED_PROXY_HOPS > 0) {
     const forwarded = req.headers['x-forwarded-for'];
     if (forwarded) {
       const parts = String(Array.isArray(forwarded) ? forwarded[0] : forwarded)
         .split(',').map((s) => s.trim()).filter(Boolean);
-      const clientIndex = parts.length - TRUSTED_PROXY_HOPS - 1;
+      const clientIndex = parts.length - TRUSTED_PROXY_HOPS;
       if (clientIndex >= 0) return parts[clientIndex] || req.socket.remoteAddress || 'local';
     }
   }
