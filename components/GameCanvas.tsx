@@ -814,7 +814,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const score = Math.round(base * stats.multiplier);
     stats.score += score;
     addFloatingText(`${label} +${score}`, x, y, combo ? '#ffe066' : '#9ee6ff', combo ? 18 : 15);
-    scoreEventLogRef.current.push({ t: now - stats.startedAt, type: label, base });
+    scoreEventLogRef.current.push({ t: now - stats.startedAt, type: label, base, mult: stats.multiplier });
   };
 
   const endRun = () => {

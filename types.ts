@@ -135,6 +135,10 @@ export interface ScoreEvent {
   t: number;
   type: string;
   base: number;
+  /** Combo multiplier in effect when this score was awarded (client authoritative).
+   *  Sent by new clients so the server replays exact scoring without recomputing
+   *  combo (which drifts — client combo resets on damage, invisible to server). */
+  mult?: number;
 }
 
 export interface RunSummary {

@@ -274,6 +274,11 @@ const KNOWN_BASE_VALUES = {
 const COMBO_WINDOW_REPLAY_MS = 4500;
 const TAXI_FREERIDE_BONUS_REPLAY = 1800;
 const TAXI_FREERIDE_THRESHOLD_REPLAY = 3;
+// Legal combo multipliers — 1 + floor(combo/4)*0.25, capped at 5. New clients
+// report the actual multiplier at award time so the server replays exact scoring
+// instead of recomputing combo (which drifts: client combo resets on damage, line
+// 1449, invisible to a timestamp-only server replay).
+const LEGAL_MULTS = new Set([1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3, 3.25, 3.5, 3.75, 4, 4.25, 4.5, 4.75, 5]);
 
 const normalizeSummary = (value) => ({
   score: Math.floor(Number(value?.score) || 0),
@@ -325,12 +330,14 @@ const replayScore = (events, summary, runPayload) => {
   if (events.length === 0 && summary.score > 0) return 'SCORE_MISMATCH';
 
   let replayedScore = 0;
-  let combo = 0;
-  let lastComboAt = 0;
   let taxiRides = 0;
+  // Legacy fallback state: old clients don't send per-event `mult`, so for those
+  // we recompute combo from event timestamps (drift-prone, but only affects
+  // unrefreshed clients — new clients send mult and bypass this entirely).
+  let legacyCombo = 0;
+  let legacyLastComboAt = 0;
 
   for (const e of events) {
-    const t = Math.floor(Number(e?.t) || 0);
     const type = String(e?.type || '');
     const base = Math.floor(Number(e?.base) || 0);
 
@@ -341,13 +348,22 @@ const replayScore = (events, summary, runPayload) => {
     // Count taxi rides for freeride bonus
     if (type === 'TAXI RIDE') taxiRides++;
 
-    // Replay combo multiplier (matches awardScore logic)
-    if (t - lastComboAt <= COMBO_WINDOW_REPLAY_MS) combo++;
-    else combo = 1;
-    lastComboAt = t;
-    const mult = Math.min(5, 1 + Math.floor(combo / 4) * 0.25);
+    // New clients send the actual multiplier at award time (exact match to client
+    // scoring — immune to combo-state drift). Legacy clients omit it; we recompute.
+    let appliedMult;
+    const mult = e?.mult;
+    if (mult === undefined || mult === null) {
+      const t = Math.floor(Number(e?.t) || 0);
+      legacyCombo = t - legacyLastComboAt <= COMBO_WINDOW_REPLAY_MS ? legacyCombo + 1 : 1;
+      legacyLastComboAt = t;
+      appliedMult = Math.min(5, 1 + Math.floor(legacyCombo / 4) * 0.25);
+    } else {
+      const m = Number(mult);
+      if (!LEGAL_MULTS.has(m)) return 'INVALID_EVENT';
+      appliedMult = m;
+    }
 
-    replayedScore += Math.round(base * mult);
+    replayedScore += Math.round(base * appliedMult);
   }
 
   // Add distance-based score (not tracked as discrete events; estimated from summary).
