@@ -54,13 +54,15 @@ npm run serve
 
 ## 重建 VOCALOID 数据库
 
-游戏内置的曲库和 P 主别名是从 bilibili / voca.wiki 抓的。已生成的 `public/data/*.json` 已提交进仓库,脱机可直接用。上游改版后想刷新数据:
+游戏内置的曲库和 P 主别名都是从 **voca.wiki** 抓的。已生成的 `public/data/*.json` 已提交进仓库,脱机可直接用。上游改版后想刷新数据:
 
 ```bash
 npm run build:vocaloid-db
 ```
 
-这会重新跑 `scripts/build-biliboard-hot-db.mjs`(抓 bilibili VOCALOID 热门榜)和 `scripts/collect-producer-aliases-cn.mjs`(中文 P 主别名库),需联网。脚本失效不影响已生成的 JSON。
+`scripts/build-biliboard-hot-db.mjs` 抓 voca.wiki 的 `Biliboard术力口周榜` wikitext(biliboard.uk 公开 API 因 Cloudflare 拦截不可用),`scripts/collect-producer-aliases-cn.mjs` 抓中文 P 主别名库,均需联网。脚本失效不影响已生成的 JSON。
+
+> **生产环境**已配置自动周更:服务器 cron 每周四(北京时间 03:17)跑刷新脚本覆盖 `dist/data/`,失败兜底(不覆盖旧库) + 邮件告警。本地改了爬虫脚本后要手动 scp 到服务器(`/opt/humans-are-cats/app` 不是 git 仓库)。
 
 ## 项目结构
 

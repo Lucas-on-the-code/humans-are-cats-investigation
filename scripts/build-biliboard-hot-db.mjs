@@ -1,17 +1,18 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, rename } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const API_BASE = 'https://voca.wiki/api.php';
 const CATEGORY_TITLE = 'Category:Biliboard术力口周榜';
-const BILIBOARD_PUBLIC_BASE = 'https://biliboard.uk/api/public';
-const BOARD_SOURCES = [
-  { id: 1, name: '周榜' },
-  { id: 2, name: '传说曲周榜' },
-];
-const OUTPUT_PATH = join(fileURLToPath(new URL('..', import.meta.url)), 'public/data/biliboard-hot-songs.json');
+const OUTPUT_PATH = process.env.BILIBOARD_DB_OUTPUT
+  || join(fileURLToPath(new URL('..', import.meta.url)), 'public/data/biliboard-hot-songs.json');
 const REQUEST_DELAY_MS = 120;
 const ENRICH_SONG_PAGES = process.env.SKIP_SONG_ENRICH !== '1';
+// Fallback guards: refuse to overwrite the existing DB unless the fresh build is sane.
+// NOTE: biliboard.uk's public API is blocked by Cloudflare for the production server's
+// IP, so the data source is voca.wiki's "Biliboard术力口周榜" weekly chart wikitext.
+const MIN_ISSUES = 50;
+const MIN_SONGS = 100;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -20,24 +21,26 @@ const apiGet = async (params) => {
   Object.entries({ format: 'json', ...params }).forEach(([key, value]) => {
     if (value !== undefined && value !== null) url.searchParams.set(key, String(value));
   });
-  const response = await fetch(url, {
-    headers: {
-      'User-Agent': 'MikuTownGame/0.1 local hot-song database builder',
-    },
-  });
-  if (!response.ok) throw new Error(`VOCALOID_WIKI_HTTP_${response.status}`);
-  return response.json();
-};
-
-const biliboardGet = async (path) => {
-  const response = await fetch(`${BILIBOARD_PUBLIC_BASE}${path}`, {
-    headers: {
-      Accept: 'application/json',
-      'User-Agent': 'MikuTownGame/0.1 local hot-song database builder',
-    },
-  });
-  if (!response.ok) throw new Error(`BILIBOARD_HTTP_${response.status}_${path}`);
-  return response.json();
+  // voca.wiki occasionally drops a connection (transient TLS/reset); retry with backoff
+  // so a single hiccup does not fail the whole weekly build. Hard timeout per attempt.
+  let lastError;
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        headers: { 'User-Agent': 'MikuTownGame/0.1 local hot-song database builder' },
+        signal: AbortSignal.timeout(20000),
+      });
+      if (!response.ok) throw new Error(`VOCALOID_WIKI_HTTP_${response.status}`);
+      return response.json();
+    } catch (error) {
+      lastError = error;
+      if (attempt < 4) {
+        console.info(`[biliboard-db] apiGet retry ${attempt}/3 (${error instanceof Error ? error.message : error}); backing off ${attempt * 500}ms`);
+        await sleep(attempt * 500);
+      }
+    }
+  }
+  throw lastError;
 };
 
 const cleanWikiText = (value) => (
@@ -97,11 +100,26 @@ const parseIssueNumber = (title) => {
   return match ? Number(match[1]) : undefined;
 };
 
-const formatDateFromUnixSeconds = (value) => (
-  Number.isFinite(value)
-    ? new Date(value * 1000).toISOString().slice(0, 10)
-    : ''
-);
+// Parse a CN wall-clock string like "2026-06-17 18:00:00" as Beijing time (UTC+8)
+// into unix seconds. voca.wiki publishes all chart times in CST.
+const parseCnDateToUnix = (value) => {
+  const m = String(value ?? '').match(/(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/u);
+  if (!m) return undefined;
+  const ms = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4] || 0), Number(m[5] || 0), Number(m[6] || 0)) - 8 * 3600 * 1000;
+  return Math.floor(ms / 1000);
+};
+
+// ISO-8601 year + week number for a unix timestamp (used for latestEntry serialization).
+const isoYearAndWeek = (unix) => {
+  if (!Number.isFinite(unix)) return { year: undefined, week: undefined };
+  const base = new Date(unix * 1000);
+  const d = new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth(), base.getUTCDate()));
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const week = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+  return { year: d.getUTCFullYear(), week };
+};
 
 const parseTemplateHeader = (wikitext) => {
   const match = wikitext.match(/\{\{Biliboard术力口周榜([\s\S]*?)\n\}\}/u);
@@ -120,6 +138,8 @@ const parseTemplateHeader = (wikitext) => {
 const parseRankingEntries = (wikitext, pageTitle) => {
   const issue = parseIssueNumber(pageTitle);
   const header = parseTemplateHeader(wikitext);
+  const issueEndDate = parseCnDateToUnix(header.publishedAt);
+  const { year: issueYear, week: issueWeek } = isoYearAndWeek(issueEndDate);
   const entries = [];
   const blockRegex = /\{\{虚拟歌手外语排行榜\/bricks([\s\S]*?)\n\}\}/gu;
   for (const match of wikitext.matchAll(blockRegex)) {
@@ -134,13 +154,21 @@ const parseRankingEntries = (wikitext, pageTitle) => {
     const vocalists = splitNames(fields['歌姬']);
     const bvid = cleanWikiText(fields.id);
     entries.push({
+      boardId: 1,
+      boardName: '周榜',
       issue,
+      issueYear,
+      issueWeek,
+      issueEndDate,
       rank,
       title,
+      titleCn: '',
       canonicalTitle,
       aliases: [...new Set([title, canonicalTitle].filter(Boolean))],
       producers,
+      producerAliases: [],
       vocalists,
+      vocalistAliases: [],
       bvid,
       bilibiliUrl: bvid ? `https://www.bilibili.com/video/${bvid}` : '',
       publishedAt: cleanWikiText(fields['时间']),
@@ -191,84 +219,31 @@ const fetchPageWikitext = async (title) => {
   return payload.parse?.wikitext?.['*'] || '';
 };
 
-const mapBiliboardRankingEntry = (row, board, issue) => {
-  const title = cleanWikiText(row.title);
-  const titleCn = cleanWikiText(row.titleCn || row.title_cn);
-  const producers = (row.producers ?? []).map((item) => cleanWikiText(item.name)).filter(Boolean);
-  const vocalists = (row.vocalists ?? []).map((item) => cleanWikiText(item.name)).filter(Boolean);
-  const vocalistAliases = (row.vocalists ?? []).flatMap((item) => item.aliases ?? []).map(cleanWikiText).filter(Boolean);
-  const producerAliases = (row.producers ?? []).flatMap((item) => item.aliases ?? []).map(cleanWikiText).filter(Boolean);
-  const bvid = cleanWikiText(row.bvid);
-
-  return {
-    boardId: board.id,
-    boardName: board.name,
-    issue: issue.issue_id,
-    issueYear: issue.year,
-    issueWeek: issue.week,
-    issueEndDate: issue.end_date,
-    rank: row.rank,
-    title,
-    titleCn,
-    canonicalTitle: title,
-    aliases: [...new Set([title, titleCn].filter(Boolean))],
-    producers,
-    producerAliases,
-    vocalists,
-    vocalistAliases,
-    bvid,
-    bilibiliUrl: bvid ? `https://www.bilibili.com/video/${bvid}` : '',
-    publishedAt: formatDateFromUnixSeconds(row.pubtime),
-    firstRecordedAt: formatDateFromUnixSeconds(row.firstRecordedAt || row.first_recorded_at),
-    score: row.score,
-    plays: row.stats?.views,
-    favorites: row.stats?.favorites,
-    likes: row.stats?.likes,
-    coins: row.stats?.coins,
-    weeksOnBoard: row.weeksOnBoard ?? row.weeks_on_board,
-    peakRank: row.peakRank ?? row.peak_rank,
-    sourcePage: `https://biliboard.uk/boards/${board.id}/issues/${issue.issue_id}`,
-    sourcePageTitle: `Biliboard${board.name}/第${issue.issue_id}期`,
-    sourceVideoId: issue.video_bvid,
-    sourceArticleUrl: issue.video_bvid ? `https://www.bilibili.com/video/${issue.video_bvid}` : '',
-    sourceIssuePublishedAt: formatDateFromUnixSeconds(issue.end_date),
-  };
-};
-
-const fetchBiliboardEntries = async () => {
-  const boardPayload = await biliboardGet('/boards');
-  const availableBoards = new Map((Array.isArray(boardPayload) ? boardPayload : []).map((board) => [board.id, board]));
+// Fetch every issue of the Biliboard术力口周榜 from voca.wiki and parse the ranking
+// entries out of each issue page's wikitext. (biliboard.uk public API is unusable
+// from this host — Cloudflare 403s the server IP — so voca.wiki is the source of truth.)
+const fetchVocaWikiEntries = async () => {
+  const pages = await fetchCategoryPages();
   const entries = [];
-  const sourceStats = [];
-
-  for (const boardSource of BOARD_SOURCES) {
-    const board = availableBoards.get(boardSource.id) ?? boardSource;
-    const issues = await biliboardGet(`/boards/${boardSource.id}/issues`);
-    const sortedIssues = issues.slice().sort((a, b) => a.issue_id - b.issue_id);
-    let entryCount = 0;
-
-    for (const [index, issue] of sortedIssues.entries()) {
-      const rankings = await biliboardGet(`/boards/${boardSource.id}/issues/${issue.issue_id}/rankings`);
-      const issueEntries = rankings
-        .map((row) => mapBiliboardRankingEntry(row, board, issue))
-        .filter((entry) => entry.title);
-      entries.push(...issueEntries);
-      entryCount += issueEntries.length;
-      console.info(`[biliboard-db] ${board.name} ${index + 1}/${sortedIssues.length} issue=${issue.issue_id} entries=${issueEntries.length}`);
-      await sleep(REQUEST_DELAY_MS);
-    }
-
-    sourceStats.push({
-      boardId: boardSource.id,
-      boardName: board.name,
-      issueCount: sortedIssues.length,
-      entryCount,
-      firstIssue: sortedIssues[0]?.issue_id,
-      latestIssue: sortedIssues.at(-1)?.issue_id,
-    });
+  for (const [index, page] of pages.entries()) {
+    const wikitext = await fetchPageWikitext(page.title);
+    const issueEntries = parseRankingEntries(wikitext, page.title).filter((entry) => entry.title);
+    entries.push(...issueEntries);
+    console.info(`[biliboard-db] voca.wiki ${index + 1}/${pages.length} issue=${page.issue} entries=${issueEntries.length}`);
+    await sleep(REQUEST_DELAY_MS);
   }
 
-  return { entries, sourceStats };
+  return {
+    entries,
+    sourceStats: [{
+      boardId: 1,
+      boardName: '周榜',
+      issueCount: pages.length,
+      entryCount: entries.length,
+      firstIssue: pages[0]?.issue,
+      latestIssue: pages.at(-1)?.issue,
+    }],
+  };
 };
 
 const parseSongPageMetadata = (wikitext) => {
@@ -416,19 +391,18 @@ const mergeEntries = (entries) => {
     });
 };
 
-const main = async () => {
-  const { entries: allEntries, sourceStats } = await fetchBiliboardEntries();
+const buildPayload = async () => {
+  const { entries: allEntries, sourceStats } = await fetchVocaWikiEntries();
 
   const songs = await enrichSongsWithSongPages(mergeEntries(allEntries));
-  const payload = {
-    version: 2,
+  return {
+    version: 3,
     generatedAt: new Date().toISOString(),
     source: {
-      name: 'Biliboard术力口热曲库',
+      name: 'Biliboard术力口周榜热曲库',
       boards: sourceStats.map((item) => ({ id: item.boardId, name: item.boardName })),
-      biliboardApi: BILIBOARD_PUBLIC_BASE,
       wikiApi: API_BASE,
-      sourceNote: 'Built from Biliboard public API board rankings, including weekly chart and legendary-song weekly chart.',
+      sourceNote: 'Built from voca.wiki "Biliboard术力口周榜" weekly chart wikitext. biliboard.uk public API is Cloudflare-blocked for the production server IP, so voca.wiki is the data source.',
     },
     stats: {
       boardStats: sourceStats,
@@ -438,14 +412,36 @@ const main = async () => {
     },
     songs,
   };
+};
 
+// Atomic + guarded write: serialize to a temp file, validate (counts + re-parse),
+// only then rename over the real DB. Any failure leaves the existing DB untouched
+// and the process exits non-zero so the weekly cron / monitoring surfaces it.
+const writePayload = async (payload) => {
+  const issueCount = payload.stats?.issueCount ?? 0;
+  const songCount = payload.songs?.length ?? 0;
+  if (!Number.isFinite(issueCount) || issueCount < MIN_ISSUES) {
+    throw new Error(`VALIDATION_FAIL issueCount=${issueCount} < MIN_ISSUES=${MIN_ISSUES}`);
+  }
+  if (!Number.isFinite(songCount) || songCount < MIN_SONGS) {
+    throw new Error(`VALIDATION_FAIL songCount=${songCount} < MIN_SONGS=${MIN_SONGS}`);
+  }
   await mkdir(dirname(OUTPUT_PATH), { recursive: true });
-  await writeFile(OUTPUT_PATH, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+  const tmpPath = `${OUTPUT_PATH}.tmp`;
+  await writeFile(tmpPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+  // Re-parse the temp file to prove it is not truncated/corrupt before swapping in.
+  JSON.parse(await readFile(tmpPath, 'utf8'));
+  await rename(tmpPath, OUTPUT_PATH);
+};
+
+const main = async () => {
+  const payload = await buildPayload();
+  await writePayload(payload);
   console.info(`[biliboard-db] wrote ${OUTPUT_PATH}`);
   console.info(`[biliboard-db] ${payload.stats.issueCount} issues, ${payload.stats.entryCount} entries, ${payload.stats.songCount} unique songs`);
 };
 
 main().catch((error) => {
-  console.error('[biliboard-db] failed', error);
+  console.error('[biliboard-db] FAILED — existing DB left untouched:', error instanceof Error ? error.message : error);
   process.exitCode = 1;
 });
