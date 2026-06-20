@@ -99,7 +99,7 @@ export const zh: Record<string, string> = {
   'float.catified': '已猫化',
   'float.wantsToChat': '想聊天',
   'float.boardTaxiPrompt': '按 E/↓ 搭出租车',
-  'float.pressAnyKey': '按任意键开始游戏',
+  'float.pressAnyKey': '点击屏幕开始游戏',
   // npc labels
   'npc.miku': '初音未来',
   'npc.pedestrian': '路人',

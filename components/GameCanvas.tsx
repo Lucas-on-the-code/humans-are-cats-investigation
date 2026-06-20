@@ -1342,6 +1342,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       reconcileModifierKeys(e);
     };
     const handleFocusBoundary = () => clearInputState(true);
+    // Intro "tap to start" — bound at the window level (not on the canvas) because
+    // iOS Safari's PointerEvent delivery on touch-action:none canvases is unreliable
+    // and React's onTouchStart delegation can also miss. A native window listener is
+    // the floor that guarantees the first tap lands. No-op once intro is underway.
+    const handleIntroStart = () => {
+      if (introDropRef.current.phase === 'waiting') startIntroJump();
+    };
     const handleVisibilityChange = () => {
       if (document.hidden) clearInputState(true);
     };
@@ -1350,6 +1357,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     };
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('pointerdown', handleIntroStart);
+    window.addEventListener('touchstart', handleIntroStart, { passive: true });
     window.addEventListener('blur', handleFocusBoundary);
     window.addEventListener('focus', handleFocusBoundary);
     window.addEventListener('pagehide', handleFocusBoundary);
@@ -1358,6 +1367,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('pointerdown', handleIntroStart);
+      window.removeEventListener('touchstart', handleIntroStart);
       window.removeEventListener('blur', handleFocusBoundary);
       window.removeEventListener('focus', handleFocusBoundary);
       window.removeEventListener('pagehide', handleFocusBoundary);
@@ -1367,7 +1378,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   }, [gameState]);
 
   const handleCanvasPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (e.button !== 0) return;
+    // Only gate right/middle MOUSE buttons. Touch & pen pointers report button=0
+    // by spec, but iOS WebKit has been seen reporting other values — don't let
+    // that block the intro tap.
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
     e.preventDefault();
     startIntroJump();
     pointerActionRef.current = true;

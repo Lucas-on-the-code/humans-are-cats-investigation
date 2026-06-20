@@ -99,7 +99,7 @@ export const en: Record<string, string> = {
   'float.catified': 'Catified',
   'float.wantsToChat': 'Wants to chat',
   'float.boardTaxiPrompt': 'Press E/↓ for a ride',
-  'float.pressAnyKey': 'Press any key to start',
+  'float.pressAnyKey': 'Tap to start',
   // npc labels
   'npc.miku': 'Miku',
   'npc.pedestrian': 'Pedestrian',
