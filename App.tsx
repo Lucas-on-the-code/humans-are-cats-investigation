@@ -1391,7 +1391,7 @@ const App: React.FC = () => {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ summary: lastRunSummary, runToken: currentRunToken }),
+        body: JSON.stringify({ summary: lastRunSummary, runToken: currentRunToken, events: lastRunSummary.events ?? [] }),
       });
       const data = await res.json() as { entry?: GlobalLeaderboardEntry; entries?: GlobalLeaderboardEntry[]; viewerBest?: GlobalLeaderboardEntry | null; error?: string };
       if (!res.ok || !data.entry) throw new Error(data.error || 'UPLOAD_FAILED');

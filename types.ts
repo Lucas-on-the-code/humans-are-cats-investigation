@@ -131,6 +131,12 @@ export interface Item extends Position {
   floatOffset: number;
 }
 
+export interface ScoreEvent {
+  t: number;
+  type: string;
+  base: number;
+}
+
 export interface RunSummary {
   score: number;
   distance: number;
@@ -140,6 +146,7 @@ export interface RunSummary {
   bestCombo: number;
   survivalTime: number;
   title: string;
+  events?: ScoreEvent[];
 }
 
 export interface LeaderboardEntry extends RunSummary {

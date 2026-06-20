@@ -259,6 +259,22 @@ const verifyChallenge = ({ nonce, answer }, ipHash) => {
 };
 
 // ---------- score validation ----------
+// Known base values for each event type (anti-cheat: server-side replay).
+// These must match the constants used in GameCanvas.tsx awardScore() calls.
+const KNOWN_BASE_VALUES = {
+  FISH: new Set([90]),
+  DATA: new Set([1000]),
+  MAGNET: new Set([180]),
+  SHIELD: new Set([180]),
+  NEAR: new Set([180, 220]),
+  SCAN: new Set([240]),
+  'SCAN TARGET': new Set([700]),
+  'TAXI RIDE': new Set([620]),
+};
+const COMBO_WINDOW_REPLAY_MS = 4500;
+const TAXI_FREERIDE_BONUS_REPLAY = 1800;
+const TAXI_FREERIDE_THRESHOLD_REPLAY = 3;
+
 const normalizeSummary = (value) => ({
   score: Math.floor(Number(value?.score) || 0),
   distance: Math.floor(Number(value?.distance) || 0),
@@ -269,19 +285,73 @@ const normalizeSummary = (value) => ({
   survivalTime: Math.floor(Number(value?.survivalTime) || 0),
   title: String(value?.title || '见习调查员').slice(0, 24),
 });
+
+// Replay the client's score event log server-side to verify the claimed score.
+// Returns '' if OK, or an error code string if the score doesn't add up.
+const replayScore = (events, summary, runPayload) => {
+  if (!Array.isArray(events)) return 'NO_EVENTS';
+  if (events.length > 2000) return 'TOO_MANY_EVENTS';
+  if (events.length === 0 && summary.score > 0) return 'SCORE_MISMATCH';
+
+  let replayedScore = 0;
+  let combo = 0;
+  let lastComboAt = 0;
+  let taxiRides = 0;
+
+  for (const e of events) {
+    const t = Math.floor(Number(e?.t) || 0);
+    const type = String(e?.type || '');
+    const base = Math.floor(Number(e?.base) || 0);
+
+    // Validate base value is a known constant for this type
+    const validBases = KNOWN_BASE_VALUES[type];
+    if (!validBases || !validBases.has(base)) return 'INVALID_EVENT';
+
+    // Count taxi rides for freeride bonus
+    if (type === 'TAXI RIDE') taxiRides++;
+
+    // Replay combo multiplier (matches awardScore logic)
+    if (t - lastComboAt <= COMBO_WINDOW_REPLAY_MS) combo++;
+    else combo = 1;
+    lastComboAt = t;
+    const mult = Math.min(5, 1 + Math.floor(combo / 4) * 0.25);
+
+    replayedScore += Math.round(base * mult);
+  }
+
+  // Add distance-based score (not tracked as discrete events; estimated from summary)
+  // Distance score ≈ distance_m * (18 to 38 depending on heat). Use conservative upper bound.
+  replayedScore += Math.round(summary.distance * 38);
+
+  // Add freeride bonus
+  if (taxiRides >= TAXI_FREERIDE_THRESHOLD_REPLAY) {
+    replayedScore += TAXI_FREERIDE_BONUS_REPLAY;
+  }
+
+  // Allow 15% tolerance for distance-score estimation variance
+  const tolerance = Math.max(replayedScore * 0.15, 500);
+  if (Math.abs(replayedScore - summary.score) > tolerance) return 'SCORE_MISMATCH';
+
+  return '';
+};
+
 const validateScore = (summary, runPayload) => {
   const now = Date.now();
   const elapsedSeconds = Math.floor((now - Number(runPayload.startAt || 0)) / 1000);
   if (!runPayload.runId || now - runPayload.startAt > RUN_TTL_MS) return 'RUN_EXPIRED';
   if (summary.score < 0 || summary.distance < 0 || summary.survivalTime < 3) return 'INVALID_SCORE';
   if (summary.survivalTime > elapsedSeconds + 8) return 'TIME_TRAVEL';
-  if (summary.distance > summary.survivalTime * 10 + 150) return 'DISTANCE_TOO_HIGH'; // was *45+120 — real max ~4.4m/s + dash/taxi buffer; 37m/s cheats rejected
-  if (summary.score > summary.survivalTime * 4200 + summary.distance * 90 + 60000) return 'SCORE_TOO_HIGH';
+  // Tightened ceilings based on real game data analysis:
+  // Max distance speed ~4.4m/s + dash/taxi buffer → 8m/s, conservative at 10
+  if (summary.distance > summary.survivalTime * 10 + 150) return 'DISTANCE_TOO_HIGH';
+  // Tightened score ceiling: real top players hit ~900 pts/sec at peak,
+  // ~15 pts/m distance. Added 8000 base buffer. Old was 4200+90+60000.
+  if (summary.score > summary.survivalTime * 1200 + summary.distance * 20 + 12000) return 'SCORE_TOO_HIGH';
   if (summary.bestCombo > 999 || summary.evidence > 999 || summary.scans > 999) return 'STAT_TOO_HIGH';
   return '';
 };
 const isScoreSuspicious = (summary) => {
-  const ceiling = summary.survivalTime * 4200 + summary.distance * 90 + 60000;
+  const ceiling = summary.survivalTime * 1200 + summary.distance * 20 + 12000;
   return summary.score > ceiling * 0.7;
 };
 
@@ -477,6 +547,11 @@ export const handleLeaderboardRequest = async (req, res) => {
       if (runPayload.userId && runPayload.userId !== user.id) return writeJson(res, 403, { error: 'RUN_USER_MISMATCH' });
       const scoreError = validateScore(summary, runPayload);
       if (scoreError) return writeJson(res, 400, { error: scoreError });
+
+      // Replay-based anti-cheat: verify the score event log matches the claimed score
+      const events = Array.isArray(body.events) ? body.events : [];
+      const replayError = replayScore(events, summary, runPayload);
+      if (replayError) return writeJson(res, 400, { error: replayError });
 
       // Single transaction: replay check + insert score + record runId. SQLite's
       // writer lock serializes this atomically — replaces the old withDbMutex.

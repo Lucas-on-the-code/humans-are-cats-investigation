@@ -34,6 +34,7 @@ import {
   Hazard,
   Position,
   RunSummary,
+  ScoreEvent,
   NpcChatSession,
   NpcChatTarget,
 } from '../types';
@@ -400,6 +401,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const mapRhythmRef = useRef<MapRhythm>({ recentIds: [], recentFamilies: [], dangerStreak: 0 });
   const objectIdRef = useRef(1);
   const endedRef = useRef(false);
+  const scoreEventLogRef = useRef<ScoreEvent[]>([]);
   const screenShakeRef = useRef(0);
   const prevJumpRef = useRef(false);
   const prevActionRef = useRef(false);
@@ -688,6 +690,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     mapRhythmRef.current = { recentIds: [], recentFamilies: [], dangerStreak: 0 };
     objectIdRef.current = 1;
     endedRef.current = false;
+    scoreEventLogRef.current = [];
     screenShakeRef.current = 0;
     prevJumpRef.current = false;
     prevActionRef.current = false;
@@ -811,6 +814,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const score = Math.round(base * stats.multiplier);
     stats.score += score;
     addFloatingText(`${label} +${score}`, x, y, combo ? '#ffe066' : '#9ee6ff', combo ? 18 : 15);
+    scoreEventLogRef.current.push({ t: now - stats.startedAt, type: label, base });
   };
 
   const endRun = () => {
@@ -830,7 +834,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             : stats.evidence >= 6
               ? t('title.evidenceHunter')
               : t('title.apprentice');
-    const runSummary = {
+    const runSummary: RunSummary = {
       score,
       distance: getDistanceMeters(stats.distance),
       evidence: stats.evidence,
@@ -839,6 +843,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       bestCombo: stats.bestCombo,
       survivalTime: Math.floor((Date.now() - stats.startedAt) / 1000),
       title,
+      events: scoreEventLogRef.current,
     };
     // Fire onGameOver OFF the rAF callback. Safari can throttle rAF when WebAudio
     // hits an error state on the death frame (DEATH sfx + stopMusic source start/stop
