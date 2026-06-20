@@ -63,6 +63,7 @@ export const zh: Record<string, string> = {
   'upload.error.alreadySubmitted': '这一局已经上传过了',
   'upload.error.loginRequired': '登录后才能上传成绩',
   'upload.error.rejected': '服务端觉得这一局数据不合理，已拒绝上传',
+  'upload.error.replayFailed': '成绩校验未通过，请刷新页面重试',
   'upload.error.generic': '成绩上传失败，稍后再试',
   'run.noServerConnection': '本局未连接到服务端，结束后只能保存本地成绩',
   // chat

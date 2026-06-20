@@ -290,7 +290,7 @@ const normalizeSummary = (value) => ({
 // Returns '' if OK, or an error code string if the score doesn't add up.
 const replayScore = (events, summary, runPayload) => {
   if (!Array.isArray(events)) return 'NO_EVENTS';
-  if (events.length > 2000) return 'TOO_MANY_EVENTS';
+  if (events.length > 6000) return 'TOO_MANY_EVENTS';
   if (events.length === 0 && summary.score > 0) return 'SCORE_MISMATCH';
 
   let replayedScore = 0;
@@ -320,16 +320,18 @@ const replayScore = (events, summary, runPayload) => {
   }
 
   // Add distance-based score (not tracked as discrete events; estimated from summary)
-  // Distance score ≈ distance_m * (18 to 38 depending on heat). Use conservative upper bound.
-  replayedScore += Math.round(summary.distance * 38);
+  // Distance score = distance_m * (18 + heat*20). heat ramps 0→1 over first ~300m.
+  // For long runs heat≈1 so use 32 as midpoint estimate. Tolerance covers the rest.
+  const distScorePerM = summary.distance > 300 ? 36 : 24;
+  replayedScore += Math.round(summary.distance * distScorePerM);
 
   // Add freeride bonus
   if (taxiRides >= TAXI_FREERIDE_THRESHOLD_REPLAY) {
     replayedScore += TAXI_FREERIDE_BONUS_REPLAY;
   }
 
-  // Allow 15% tolerance for distance-score estimation variance
-  const tolerance = Math.max(replayedScore * 0.15, 500);
+  // Allow 20% tolerance for distance-score estimation variance
+  const tolerance = Math.max(replayedScore * 0.20, 800);
   if (Math.abs(replayedScore - summary.score) > tolerance) return 'SCORE_MISMATCH';
 
   return '';

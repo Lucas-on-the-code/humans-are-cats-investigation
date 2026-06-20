@@ -63,6 +63,7 @@ export const en: Record<string, string> = {
   'upload.error.alreadySubmitted': 'This run was already uploaded',
   'upload.error.loginRequired': 'Log in to upload scores',
   'upload.error.rejected': 'Server rejected this run (data looks off)',
+  'upload.error.replayFailed': 'Score verification failed, please refresh and try again',
   'upload.error.generic': 'Score upload failed, try again later',
   'run.noServerConnection': 'Not connected to server — only local score saved',
   // chat

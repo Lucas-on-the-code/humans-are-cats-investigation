@@ -1408,7 +1408,9 @@ const App: React.FC = () => {
           ? t('upload.error.loginRequired')
           : message === 'SCORE_TOO_HIGH' || message === 'DISTANCE_TOO_HIGH' || message === 'TIME_TRAVEL'
             ? t('upload.error.rejected')
-            : t('upload.error.generic');
+            : message === 'SCORE_MISMATCH' || message === 'NO_EVENTS' || message === 'INVALID_EVENT' || message === 'TOO_MANY_EVENTS'
+              ? t('upload.error.replayFailed')
+              : t('upload.error.generic');
       setAuthMessage(friendly);
     } finally {
       setUploadBusy(false);
