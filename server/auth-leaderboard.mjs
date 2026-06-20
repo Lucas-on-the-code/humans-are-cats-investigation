@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { readFileSync } from 'node:fs';
+import { readFileSync, appendFileSync, statSync, writeFileSync } from 'node:fs';
 import { createHmac, pbkdf2Sync, randomBytes, timingSafeEqual, createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,7 +12,7 @@ const DB_FILE = JSON_LEGACY_PATH.replace(/\.json$/i, '.sqlite');
 
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
 const RUN_TTL_MS = 1000 * 60 * 60 * 2;
-const POW_DIFFICULTY = 4;
+const POW_DIFFICULTY = 3;
 const SECRET = process.env.GAME_SERVER_SECRET || (() => {
   console.warn('[auth] GAME_SERVER_SECRET not set — using an ephemeral random secret. Set GAME_SERVER_SECRET in production; server.mjs enforces it on boot.');
   return randomBytes(32).toString('hex');
@@ -162,12 +162,17 @@ const writeJson = (res, status, payload) => {
 
 const TRUSTED_PROXY_HOPS = Math.max(0, Number(process.env.TRUSTED_PROXY_HOPS || '0'));
 const getIp = (req) => {
+  // Prefer X-Real-IP (set by nginx to $remote_addr) — simpler and correct
+  // for single-proxy setups where X-Forwarded-For has only one entry.
+  const realIp = req.headers['x-real-ip'];
+  if (realIp) return String(realIp).trim() || req.socket.remoteAddress || 'local';
+
   if (TRUSTED_PROXY_HOPS > 0) {
     const forwarded = req.headers['x-forwarded-for'];
     if (forwarded) {
       const parts = String(Array.isArray(forwarded) ? forwarded[0] : forwarded)
         .split(',').map((s) => s.trim()).filter(Boolean);
-      const clientIndex = parts.length - TRUSTED_PROXY_HOPS - 1;
+      const clientIndex = parts.length - TRUSTED_PROXY_HOPS;
       if (clientIndex >= 0) return parts[clientIndex] || req.socket.remoteAddress || 'local';
     }
   }
@@ -254,6 +259,27 @@ const verifyChallenge = ({ nonce, answer }, ipHash) => {
 };
 
 // ---------- score validation ----------
+// Known base values for each event type (anti-cheat: server-side replay).
+// These must match the constants used in GameCanvas.tsx awardScore() calls.
+const KNOWN_BASE_VALUES = {
+  FISH: new Set([90]),
+  DATA: new Set([1000]),
+  MAGNET: new Set([180]),
+  SHIELD: new Set([180]),
+  NEAR: new Set([180, 220]),
+  SCAN: new Set([240]),
+  'SCAN TARGET': new Set([700]),
+  'TAXI RIDE': new Set([620]),
+};
+const COMBO_WINDOW_REPLAY_MS = 4500;
+const TAXI_FREERIDE_BONUS_REPLAY = 1800;
+const TAXI_FREERIDE_THRESHOLD_REPLAY = 3;
+// Legal combo multipliers — 1 + floor(combo/4)*0.25, capped at 5. New clients
+// report the actual multiplier at award time so the server replays exact scoring
+// instead of recomputing combo (which drifts: client combo resets on damage, line
+// 1449, invisible to a timestamp-only server replay).
+const LEGAL_MULTS = new Set([1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3, 3.25, 3.5, 3.75, 4, 4.25, 4.5, 4.75, 5]);
+
 const normalizeSummary = (value) => ({
   score: Math.floor(Number(value?.score) || 0),
   distance: Math.floor(Number(value?.distance) || 0),
@@ -264,19 +290,128 @@ const normalizeSummary = (value) => ({
   survivalTime: Math.floor(Number(value?.survivalTime) || 0),
   title: String(value?.title || '见习调查员').slice(0, 24),
 });
+
+// Persist the full event log of every rejected submission to a JSONL file so a
+// real mismatch can be replayed offline and the combo-replay drift pinned down.
+// The file self-truncates past REJECT_DUMP_MAX_BYTES so it can't fill the disk.
+// Override path with GAME_REJECT_DUMP; defaults to <app>/data/rejected-runs.jsonl.
+const REJECT_DUMP_PATH = process.env.GAME_REJECT_DUMP || join(fileURLToPath(new URL('..', import.meta.url)), 'data/rejected-runs.jsonl');
+const REJECT_DUMP_MAX_BYTES = 20 * 1024 * 1024;
+const dumpRejectedRun = (errorCode, diag, events) => {
+  try {
+    appendFileSync(REJECT_DUMP_PATH, JSON.stringify({ at: new Date().toISOString(), errorCode, ...diag, events }) + '\n');
+    // Trim AFTER the append — checking size first is a check-then-act race under
+    // concurrent writers (all pass the guard, all append, file blows past the cap).
+    // Keep the most recent half, line-aligned, so fresh diagnostic data survives
+    // rotation instead of being wiped wholesale (we don't want to lose the very
+    // case we're trying to capture).
+    try {
+      const { size } = statSync(REJECT_DUMP_PATH);
+      if (size > REJECT_DUMP_MAX_BYTES) {
+        const data = readFileSync(REJECT_DUMP_PATH, 'utf8');
+        const cut = data.indexOf('\n', size - Math.floor(REJECT_DUMP_MAX_BYTES / 2));
+        writeFileSync(REJECT_DUMP_PATH, cut >= 0 ? data.slice(cut + 1) : data);
+      }
+    } catch {}
+  } catch (e) { console.warn('[leaderboard] reject-dump failed', e.message); }
+};
+
+// Replay the client's score event log server-side to verify the claimed score.
+// Returns '' if OK, or an error code string if the score doesn't add up.
+const replayScore = (events, summary, runPayload) => {
+  if (!Array.isArray(events)) return 'NO_EVENTS';
+  // DoS guard, NOT a player cap. A human run is bounded by RUN_TTL (2h) × peak
+  // event rate (~20/s) ≈ 144k events; 200k is unreachable by any legitimate
+  // player, so endurance runs are never capped. Score fraud is caught by the
+  // SCORE_MISMATCH tolerance + validateScore ceiling; this only stops a malicious
+  // client forcing an unbounded replay loop. Defence-in-depth alongside the
+  // nginx client_max_body_size body limit.
+  if (events.length > 200000) return 'TOO_MANY_EVENTS';
+  if (events.length === 0 && summary.score > 0) return 'SCORE_MISMATCH';
+
+  let replayedScore = 0;
+  let taxiRides = 0;
+  // Legacy fallback state: old clients don't send per-event `mult`, so for those
+  // we recompute combo from event timestamps (drift-prone, but only affects
+  // unrefreshed clients — new clients send mult and bypass this entirely).
+  let legacyCombo = 0;
+  let legacyLastComboAt = 0;
+
+  for (const e of events) {
+    const type = String(e?.type || '');
+    const base = Math.floor(Number(e?.base) || 0);
+
+    // Validate base value is a known constant for this type
+    const validBases = KNOWN_BASE_VALUES[type];
+    if (!validBases || !validBases.has(base)) return 'INVALID_EVENT';
+
+    // Count taxi rides for freeride bonus
+    if (type === 'TAXI RIDE') taxiRides++;
+
+    // New clients send the actual multiplier at award time (exact match to client
+    // scoring — immune to combo-state drift). Legacy clients omit it; we recompute.
+    let appliedMult;
+    const mult = e?.mult;
+    if (mult === undefined || mult === null) {
+      const t = Math.floor(Number(e?.t) || 0);
+      legacyCombo = t - legacyLastComboAt <= COMBO_WINDOW_REPLAY_MS ? legacyCombo + 1 : 1;
+      legacyLastComboAt = t;
+      appliedMult = Math.min(5, 1 + Math.floor(legacyCombo / 4) * 0.25);
+    } else {
+      const m = Number(mult);
+      if (!LEGAL_MULTS.has(m)) return 'INVALID_EVENT';
+      appliedMult = m;
+    }
+
+    replayedScore += Math.round(base * appliedMult);
+  }
+
+  // Add distance-based score (not tracked as discrete events; estimated from summary).
+  // Client awards distance score continuously: per metre = (18 + heat*20), where
+  // heat = min(1, distance_px / (CHUNK_LENGTH*18)). CHUNK_LENGTH=760px, PIXELS_PER_METER=100
+  // → heat saturates at 136.8m. We mirror that exact piecewise integral instead of a
+  // flat per-metre guess, so the only residual error is client frame-discretisation
+  // noise (a few tens of points), well inside tolerance.
+  const HEAT_FULL_M = 136.8;
+  const D = summary.distance;
+  const distScore = D <= HEAT_FULL_M
+    ? 18 * D + (10 / HEAT_FULL_M) * D * D            // ∫₀ᴰ (18 + 20·d/H) dd
+    : 28 * HEAT_FULL_M + (D - HEAT_FULL_M) * 38;     // ramp region + saturated (38/m)
+  replayedScore += Math.round(distScore);
+
+  // Add freeride bonus
+  if (taxiRides >= TAXI_FREERIDE_THRESHOLD_REPLAY) {
+    replayedScore += TAXI_FREERIDE_BONUS_REPLAY;
+  }
+
+  // Tolerance covers client frame-discretisation + combo-replay drift (combo is
+  // recomputed here from event timestamps; edge cases near the 4.5s combo window,
+  // and low-score runs where the absolute tolerance would otherwise shrink to a
+  // few hundred points, can misfire on legitimate play). 25% with a 1500 floor;
+  // the validateScore ceiling above still caps absolute fraud independent of this.
+  const tolerance = Math.max(replayedScore * 0.25, 1500);
+  if (Math.abs(replayedScore - summary.score) > tolerance) return 'SCORE_MISMATCH';
+
+  return '';
+};
+
 const validateScore = (summary, runPayload) => {
   const now = Date.now();
   const elapsedSeconds = Math.floor((now - Number(runPayload.startAt || 0)) / 1000);
   if (!runPayload.runId || now - runPayload.startAt > RUN_TTL_MS) return 'RUN_EXPIRED';
   if (summary.score < 0 || summary.distance < 0 || summary.survivalTime < 3) return 'INVALID_SCORE';
   if (summary.survivalTime > elapsedSeconds + 8) return 'TIME_TRAVEL';
-  if (summary.distance > summary.survivalTime * 10 + 150) return 'DISTANCE_TOO_HIGH'; // was *45+120 — real max ~4.4m/s + dash/taxi buffer; 37m/s cheats rejected
-  if (summary.score > summary.survivalTime * 4200 + summary.distance * 90 + 60000) return 'SCORE_TOO_HIGH';
+  // Tightened ceilings based on real game data analysis:
+  // Max distance speed ~4.4m/s + dash/taxi buffer → 8m/s, conservative at 10
+  if (summary.distance > summary.survivalTime * 10 + 150) return 'DISTANCE_TOO_HIGH';
+  // Tightened score ceiling: real top players hit ~900 pts/sec at peak,
+  // ~15 pts/m distance. Added 8000 base buffer. Old was 4200+90+60000.
+  if (summary.score > summary.survivalTime * 1200 + summary.distance * 20 + 12000) return 'SCORE_TOO_HIGH';
   if (summary.bestCombo > 999 || summary.evidence > 999 || summary.scans > 999) return 'STAT_TOO_HIGH';
   return '';
 };
 const isScoreSuspicious = (summary) => {
-  const ceiling = summary.survivalTime * 4200 + summary.distance * 90 + 60000;
+  const ceiling = summary.survivalTime * 1200 + summary.distance * 20 + 12000;
   return summary.score > ceiling * 0.7;
 };
 
@@ -468,10 +603,19 @@ export const handleLeaderboardRequest = async (req, res) => {
       const body = await readJsonBody(req);
       const runPayload = verifySignedPayload(body.runToken);
       const summary = normalizeSummary(body.summary);
-      if (!runPayload) return writeJson(res, 400, { error: 'BAD_RUN_TOKEN' });
+      const events = Array.isArray(body.events) ? body.events : [];
+      // Diagnostic snapshot logged on every rejection — without this we cannot
+      // tell which anti-cheat layer killed a legitimate score (validateScore and
+      // replayScore return only an error code, so prod logs were blind).
+      const diag = { user: user.id, runId: runPayload?.runId, score: summary.score, distance: summary.distance, survivalTime: summary.survivalTime, bestCombo: summary.bestCombo, events: events.length };
+      if (!runPayload) { console.warn('[leaderboard] reject BAD_RUN_TOKEN', diag); dumpRejectedRun('BAD_RUN_TOKEN', diag, events); return writeJson(res, 400, { error: 'BAD_RUN_TOKEN' }); }
       if (runPayload.userId && runPayload.userId !== user.id) return writeJson(res, 403, { error: 'RUN_USER_MISMATCH' });
       const scoreError = validateScore(summary, runPayload);
-      if (scoreError) return writeJson(res, 400, { error: scoreError });
+      if (scoreError) { console.warn('[leaderboard] reject ' + scoreError, diag); dumpRejectedRun(scoreError, diag, events); return writeJson(res, 400, { error: scoreError }); }
+
+      // Replay-based anti-cheat: verify the score event log matches the claimed score
+      const replayError = replayScore(events, summary, runPayload);
+      if (replayError) { console.warn('[leaderboard] reject ' + replayError, diag); dumpRejectedRun(replayError, diag, events); return writeJson(res, 400, { error: replayError }); }
 
       // Single transaction: replay check + insert score + record runId. SQLite's
       // writer lock serializes this atomically — replaces the old withDbMutex.

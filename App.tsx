@@ -1,9 +1,10 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useI18n } from './i18n';
 import { GameCanvas } from './components/GameCanvas';
 import { DialogBox } from './components/DialogBox';
 import { GameState, LeaderboardEntry, NpcChatSession, RunSummary, TouchInput } from './types';
-import { LYRICS, IDLE_SPRITE_URLS } from './constants';
+import { LYRICS, LYRICS_EN, IDLE_SPRITE_URLS } from './constants';
 import { gameAudio } from './utils/audioSystem';
 import {
   buildMikuMemoryBrief,
@@ -765,15 +766,19 @@ const searchBiliboardHotSongs = async (queries: string[], options: { allowFuzzy?
   if (!songs.length) return [];
   const terms = [...new Set(queries.map(normalizeLookupText).filter((term) => term.length >= 2))].slice(0, 6);
   if (terms.length === 0) return [];
-  const ranked = songs
-    .map((song) => ({ song, match: scoreBiliboardSong(song, terms, options, producerAliasDb) }))
-    .filter((item) => item.match.score >= 65)
-    .sort((a, b) => b.match.score - a.match.score)
-    .slice(0, 4);
-  if (!ranked.length) return [];
+  // Chunk + yield: scoreBiliboardSong is DP-heavy (~22M ops over 529 songs × 6 terms).
+  // Yielding every 40 songs lets the game's rAF loop keep rendering during NPC chat.
+  const ranked: { song: BiliboardHotSong; match: ReturnType<typeof scoreBiliboardSong> }[] = [];
+  for (let i = 0; i < songs.length; i++) {
+    const match = scoreBiliboardSong(songs[i], terms, options, producerAliasDb);
+    if (match.score >= 65) ranked.push({ song: songs[i], match });
+    if (i % 40 === 39) await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  const top = ranked.sort((a, b) => b.match.score - a.match.score).slice(0, 4);
+  if (!top.length) return [];
   return [{
     query: queries.join(' | '),
-    results: ranked.map((item) => mapBiliboardSongToLookupResult(item.song, item.match, producerAliasDb)),
+    results: top.map((item) => mapBiliboardSongToLookupResult(item.song, item.match, producerAliasDb)),
     primary: 'Biliboard',
     debug: {
       vocadbUrl: getBiliboardHotDbUrls()[0],
@@ -990,6 +995,7 @@ const NpcChatBox: React.FC<{
   onSend: (text: string) => void;
   onStartChat: () => void;
 }> = ({ chat, onClose, onDeclineInvite, onSend, onStartChat }) => {
+  const { t } = useI18n();
   const [draft, setDraft] = useState('');
   const messagesRef = useRef<HTMLDivElement | null>(null);
   const isMiku = chat.kind === 'miku';
@@ -1034,17 +1040,17 @@ const NpcChatBox: React.FC<{
           <div ref={messagesRef} className={`${isMiku ? 'max-h-36 md:max-h-44' : 'max-h-28'} overflow-y-auto space-y-1 pr-1`}>
             {chat.messages.map((message, idx) => (
               <p key={idx} className={`text-xs md:text-sm leading-snug ${message.role === 'user' ? 'text-sky-200' : 'text-slate-100'}`}>
-                <span className={message.role === 'user' ? 'text-sky-300 mr-1' : 'text-cyan-300 mr-1'}>{message.role === 'user' ? '你' : '>'}</span>
+                <span className={message.role === 'user' ? 'text-sky-300 mr-1' : 'text-cyan-300 mr-1'}>{message.role === 'user' ? t('chat.youPrefix') : '>'}</span>
                 {message.content}
               </p>
             ))}
-            {chat.isLoading && <p className="text-cyan-300 text-xs animate-pulse">初音未来正在想...</p>}
+            {chat.isLoading && <p className="text-cyan-300 text-xs animate-pulse">{t('chat.mikuThinking')}</p>}
             {chat.error && <p className="text-slate-400 text-[11px]">{chat.error}</p>}
           </div>
           {isMiku && chat.isInvite ? (
             <div className="flex justify-end gap-2">
-              <button onClick={onDeclineInvite} className="px-3 py-1 game-button-secondary rounded-md text-xs font-bold">等一下</button>
-              <button onClick={onStartChat} className="px-3 py-1 game-button rounded-md text-xs font-bold">一起聊天</button>
+              <button onClick={onDeclineInvite} className="px-3 py-1 game-button-secondary rounded-md text-xs font-bold">{t('chat.declineInvite')}</button>
+              <button onClick={onStartChat} className="px-3 py-1 game-button rounded-md text-xs font-bold">{t('chat.acceptInvite')}</button>
             </div>
           ) : isMiku ? (
             <form onSubmit={submit} className="flex gap-2">
@@ -1053,12 +1059,12 @@ const NpcChatBox: React.FC<{
                 onChange={(e) => setDraft(e.target.value)}
                 disabled={chat.isLoading}
                 className="min-w-0 flex-1 game-input rounded-md px-2 py-1 text-xs"
-                placeholder="说点什么..."
+                placeholder={t('chat.inputPlaceholder')}
               />
-              <button disabled={chat.isLoading || !draft.trim()} className="px-3 py-1 game-button rounded-md text-white text-xs font-bold disabled:opacity-40">发送</button>
+              <button disabled={chat.isLoading || !draft.trim()} className="px-3 py-1 game-button rounded-md text-white text-xs font-bold disabled:opacity-40">{t('chat.send')}</button>
             </form>
           ) : (
-            <button onClick={onClose} className="self-end text-cyan-200 hover:text-white px-1 py-0.5 text-xs animate-pulse font-bold">▼ 继续</button>
+            <button onClick={onClose} className="self-end text-cyan-200 hover:text-white px-1 py-0.5 text-xs animate-pulse font-bold">{t('chat.continue')}</button>
           )}
         </div>
       </div>
@@ -1067,6 +1073,7 @@ const NpcChatBox: React.FC<{
 };
 
 const TypewriterEffect: React.FC<{ text: string[], onComplete: () => void }> = ({ text, onComplete }) => {
+  const { t } = useI18n();
   const [displayedLines, setDisplayedLines] = useState<string[]>([]);
   const [currentLineIndex, setCurrentLineIndex] = useState(0);
   const [charIndex, setCharIndex] = useState(0);
@@ -1117,7 +1124,7 @@ const TypewriterEffect: React.FC<{ text: string[], onComplete: () => void }> = (
       {displayedLines.map((line, i) => <div key={i} className="min-h-[1.5em]">{line}</div>)}
       {!isFinished && <span className="inline-block w-2 h-4 bg-emerald-300 animate-pulse ml-1"></span>}
       <div className="text-right text-xs text-emerald-400/70 mt-4 animate-pulse">
-        {isFinished ? '[点击继续]' : '[点击任意处跳过]'}
+        {isFinished ? t('typewriter.continue') : t('typewriter.skip')}
       </div>
     </div>
   );
@@ -1149,6 +1156,7 @@ const isSafariBrowser = () => {
 };
 
 const App: React.FC = () => {
+  const { t, locale, setLocale } = useI18n();
   const [gameState, setGameState] = useState<GameState>('MENU');
   const [dialogLines, setDialogLines] = useState<string[]>([]);
   const [dialogImage, setDialogImage] = useState<string | undefined>(undefined);
@@ -1244,7 +1252,7 @@ const App: React.FC = () => {
           localStorage.removeItem(AUTH_TOKEN_KEY);
         }
       } catch {
-        if (!cancelled) setAuthMessage('账号状态暂时同步失败');
+        if (!cancelled) setAuthMessage(t('auth.error.syncFailed'));
       }
     };
     void loadMe();
@@ -1258,7 +1266,7 @@ const App: React.FC = () => {
       try {
         await syncAccountMikuMemoryFromServer(authToken, authUser.id);
       } catch {
-        if (!cancelled) setAuthMessage('Miku 记忆同步暂时失败');
+        if (!cancelled) setAuthMessage(t('auth.error.mikuSyncFailed'));
       }
     };
     void syncMikuMemory();
@@ -1291,7 +1299,7 @@ const App: React.FC = () => {
     }
     setAuthToken(token);
     setAuthUser(user);
-    setAuthMessage(`已登录：${user.username}`);
+    setAuthMessage(t('auth.loggedIn', { name: user.username }));
     setIsAuthModalOpen(false);
     try {
       localStorage.setItem(AUTH_TOKEN_KEY, token);
@@ -1303,7 +1311,7 @@ const App: React.FC = () => {
   const submitAuth = async () => {
     if (authBusy) return;
     setAuthBusy(true);
-    setAuthMessage(authMode === 'register' ? '正在注册...' : '正在登录...');
+    setAuthMessage(authMode === 'register' ? t('auth.registering') : t('auth.loggingIn'));
     try {
       let pow: { nonce: string; answer: string } | undefined;
       if (authMode === 'register') {
@@ -1325,16 +1333,24 @@ const App: React.FC = () => {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'AUTH_FAILED';
       const friendly = message === 'USERNAME_TAKEN'
-        ? '这个名字已经被用了'
+        ? t('auth.error.usernameTaken')
         : message === 'BAD_PASSWORD'
-          ? '密码至少需要 8 位'
+          ? t('auth.error.badPassword')
           : message === 'BAD_USERNAME'
-            ? '用户名需要 3 到 18 位，只能用文字、数字、下划线或短横线'
+            ? t('auth.error.badUsername')
             : message === 'REGISTER_RATE_LIMITED'
-              ? '注册太频繁了，稍等一会再试'
+              ? t('auth.error.rateLimited')
               : message === 'BAD_CREDENTIALS'
-                ? '用户名或密码不对'
-                : '账号请求失败，等一下再试';
+                ? t('auth.error.badCredentials')
+                : message === 'POW_REQUIRED'
+                  ? t('auth.error.powRequired')
+                  : message === 'CHALLENGE_FAILED'
+                    ? t('auth.error.challengeFailed')
+                    : message === 'POW_TIMEOUT'
+                      ? t('auth.error.powTimeout')
+                      : message === 'TOO_MANY_CHALLENGES'
+                        ? t('auth.error.tooManyChallenges')
+                        : t('auth.error.generic');
       setAuthMessage(friendly);
     } finally {
       setAuthBusy(false);
@@ -1362,12 +1378,12 @@ const App: React.FC = () => {
     const token = tokenOverride || authToken;
     if (!lastRunSummary || !token || uploadBusy || uploadedScoreId) return;
     if (!currentRunToken) {
-      setAuthMessage('这一局没有拿到服务端令牌，不能上传到全球榜');
+      setAuthMessage(t('upload.error.noToken'));
       return;
     }
     setUploadBusy(true);
     setUploadAttemptedRunToken(currentRunToken);
-    setAuthMessage('正在上传成绩...');
+    setAuthMessage(t('upload.uploading'));
     try {
       const res = await fetch('/api/leaderboard/submit', {
         method: 'POST',
@@ -1375,7 +1391,7 @@ const App: React.FC = () => {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ summary: lastRunSummary, runToken: currentRunToken }),
+        body: JSON.stringify({ summary: lastRunSummary, runToken: currentRunToken, events: lastRunSummary.events ?? [] }),
       });
       const data = await res.json() as { entry?: GlobalLeaderboardEntry; entries?: GlobalLeaderboardEntry[]; viewerBest?: GlobalLeaderboardEntry | null; error?: string };
       if (!res.ok || !data.entry) throw new Error(data.error || 'UPLOAD_FAILED');
@@ -1383,16 +1399,18 @@ const App: React.FC = () => {
       setViewerLeaderboardEntry(data.viewerBest ?? data.entry);
       if (Array.isArray(data.entries)) setGlobalLeaderboard(data.entries.slice(0, 50));
       else void fetchGlobalLeaderboard();
-      setAuthMessage('成绩已上传到全球排行榜');
+      setAuthMessage(t('upload.done'));
     } catch (error) {
       const message = error instanceof Error ? error.message : 'UPLOAD_FAILED';
       const friendly = message === 'RUN_ALREADY_SUBMITTED'
-        ? '这一局已经上传过了'
+        ? t('upload.error.alreadySubmitted')
         : message === 'LOGIN_REQUIRED'
-          ? '登录后才能上传成绩'
+          ? t('upload.error.loginRequired')
           : message === 'SCORE_TOO_HIGH' || message === 'DISTANCE_TOO_HIGH' || message === 'TIME_TRAVEL'
-            ? '服务端觉得这一局数据不合理，已拒绝上传'
-            : '成绩上传失败，稍后再试';
+            ? t('upload.error.rejected')
+            : message === 'SCORE_MISMATCH' || message === 'NO_EVENTS' || message === 'INVALID_EVENT' || message === 'TOO_MANY_EVENTS'
+              ? t('upload.error.replayFailed')
+              : t('upload.error.generic');
       setAuthMessage(friendly);
     } finally {
       setUploadBusy(false);
@@ -1464,7 +1482,7 @@ const App: React.FC = () => {
         if (data.runToken) setCurrentRunToken(data.runToken);
       })
       .catch(() => {
-        setAuthMessage('本局未连接到服务端，结束后只能保存本地成绩');
+        setAuthMessage(t('run.noServerConnection'));
       });
   };
 
@@ -1476,7 +1494,7 @@ const App: React.FC = () => {
     void fetch('/api/miku-chat/end', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(prepared.request),
+      body: JSON.stringify({ ...prepared.request, locale }),
     })
       .then(async (res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1488,7 +1506,7 @@ const App: React.FC = () => {
       .catch(() => {
         commitMikuMemoryEndResult(prepared, undefined, authToken);
       });
-  }, [authToken]);
+  }, [authToken, locale]);
 
   const startNpcChat = useCallback((session: NpcChatSession) => {
     const memoryScope = session.kind === 'miku' ? mikuMemoryScopeForAccount(authUser?.id) : undefined;
@@ -1681,6 +1699,8 @@ const App: React.FC = () => {
       const currentSongTurn = ++songContextTurnRef.current;
       const wantsLyricsNow = lyricContextKeywords.test(text);
       const isSongDiscussion = songDiscussionKeywords.test(text);
+      // Yield to let "Miku is thinking..." render + one rAF frame before CPU-heavy lookup
+      await new Promise((resolve) => setTimeout(resolve, 0));
       const currentLookups = await injectPassiveHotSongs(nextMessages);
       rememberRecentSongLookups(currentLookups, currentSongTurn);
       const passiveLookups = mergeLookupLists(currentLookups, getRecentSongLookups(currentSongTurn));
@@ -1691,7 +1711,7 @@ const App: React.FC = () => {
       const res = await fetch('/api/miku-chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: nextMessages, passiveVocaloidLookups: passiveLookups, lyricContexts: initialLyricContexts, memoryBrief }),
+        body: JSON.stringify({ messages: nextMessages, passiveVocaloidLookups: passiveLookups, lyricContexts: initialLyricContexts, memoryBrief, locale }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json() as MikuChatApiResponse;
@@ -1701,7 +1721,7 @@ const App: React.FC = () => {
         const finalRes = await fetch('/api/miku-chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messages: nextMessages, passiveVocaloidLookups: passiveLookups, lyricContexts: initialLyricContexts, memoryBrief, memorySearchResults: uniqueMemorySearchResults }),
+          body: JSON.stringify({ messages: nextMessages, passiveVocaloidLookups: passiveLookups, lyricContexts: initialLyricContexts, memoryBrief, memorySearchResults: uniqueMemorySearchResults, locale }),
         });
         if (!finalRes.ok) throw new Error(`HTTP ${finalRes.status}`);
         const finalData = await finalRes.json() as MikuChatApiResponse;
@@ -1716,7 +1736,7 @@ const App: React.FC = () => {
         const finalRes = await fetch('/api/miku-chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messages: nextMessages, vocaloidLookups: lookups, passiveVocaloidLookups: combinedLookups, lyricContexts, memoryBrief }),
+          body: JSON.stringify({ messages: nextMessages, vocaloidLookups: lookups, passiveVocaloidLookups: combinedLookups, lyricContexts, memoryBrief, locale }),
         });
         if (!finalRes.ok) throw new Error(`HTTP ${finalRes.status}`);
         const finalData = await finalRes.json() as MikuChatApiResponse;
@@ -1727,7 +1747,7 @@ const App: React.FC = () => {
         const finalRes = await fetch('/api/miku-chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messages: nextMessages, passiveVocaloidLookups: passiveLookups, lyricContexts, memoryBrief }),
+          body: JSON.stringify({ messages: nextMessages, passiveVocaloidLookups: passiveLookups, lyricContexts, memoryBrief, locale }),
         });
         if (!finalRes.ok) throw new Error(`HTTP ${finalRes.status}`);
         const finalData = await finalRes.json() as MikuChatApiResponse;
@@ -1738,7 +1758,7 @@ const App: React.FC = () => {
       }
       else throw new Error('EMPTY_REPLY');
     } catch (sendError) {
-      error = sendError instanceof Error ? `连接暂时不可用：${sendError.message}` : '连接暂时不可用。';
+      error = sendError instanceof Error ? `${t('chat.error.unavailable')}：${sendError.message}` : `${t('chat.error.unavailable')}。`;
     }
 
     // R3: only apply if the active chat still carries the exact messages array we
@@ -1826,34 +1846,43 @@ const App: React.FC = () => {
   return (
     <div ref={appShellRef} className={`fixed inset-0 bg-[#050510] overflow-hidden font-mono selection:bg-cyan-500 selection:text-black ${shouldHideCursor ? 'cursor-none' : 'cursor-auto'}`}>
       {shouldHideCursor && <style>{'* { cursor: none !important; }'}</style>}
-      <button aria-label="系统设置" onClick={() => setIsSettingsOpen(true)} className="absolute top-5 right-5 z-50 h-11 w-11 rounded-full game-panel text-white text-lg hover:border-cyan-300/70 transition-all active:scale-95">⚙</button>
+      <button aria-label={t('settings.ariaLabel')} onClick={() => setIsSettingsOpen(true)} className="absolute top-4 right-4 z-50 h-14 w-14 rounded-full game-panel text-white text-3xl hover:border-cyan-300/70 hover:shadow-[0_0_20px_rgba(34,211,238,0.4)] transition-all active:scale-95">⚙</button>
 
       {isSettingsOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/90 p-4">
           <div className="game-panel-strong p-6 md:p-8 rounded-lg w-full max-w-sm text-white">
-            <h2 className="text-2xl font-bold mb-7 pixel-font text-center text-cyan-200">系统设置</h2>
+            <h2 className="text-2xl font-bold mb-7 pixel-font text-center text-cyan-200">{t('settings.title')}</h2>
             <div className="mb-7">
               <label className="text-slate-300 text-sm font-bold mb-3 flex justify-between">
-                <span>主音量</span>
+                <span>{t('settings.masterVolume')}</span>
                 <span className="text-cyan-400">{Math.round(masterVolume * 100)}%</span>
               </label>
               <input type="range" min="0" max="1" step="0.05" value={masterVolume} onChange={(e) => setMasterVolume(parseFloat(e.target.value))} className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-cyan-400" />
             </div>
             <div className="mb-7">
               <label className="text-slate-300 text-sm font-bold mb-3 flex justify-between">
-                <span>音效音量</span>
+                <span>{t('settings.sfxVolume')}</span>
                 <span className="text-cyan-400">{Math.round(sfxVolume * 100)}%</span>
               </label>
               <input type="range" min="0" max="1" step="0.05" value={sfxVolume} onChange={(e) => setSfxVolume(parseFloat(e.target.value))} className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-cyan-400" />
             </div>
             <div className="mb-8">
               <label className="text-slate-300 text-sm font-bold mb-3 flex justify-between">
-                <span>音乐音量</span>
+                <span>{t('settings.musicVolume')}</span>
                 <span className="text-cyan-400">{Math.round(musicVolume * 100)}%</span>
               </label>
               <input type="range" min="0" max="1" step="0.05" value={musicVolume} onChange={(e) => setMusicVolume(parseFloat(e.target.value))} className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-cyan-400" />
             </div>
-            <button onClick={() => setIsSettingsOpen(false)} className="w-full py-3 game-button text-white font-bold rounded-md text-sm">确认并返回</button>
+            <div className="mb-8">
+              <label className="text-slate-300 text-sm font-bold mb-3 flex justify-between">
+                <span>{t('settings.language')}</span>
+              </label>
+              <div className="flex gap-2">
+                <button onClick={() => setLocale('zh')} className={`flex-1 py-2 rounded-md text-sm font-bold ${locale === 'zh' ? 'bg-cyan-500/30 text-cyan-100' : 'bg-slate-700/50 text-slate-400'}`}>中文</button>
+                <button onClick={() => setLocale('en')} className={`flex-1 py-2 rounded-md text-sm font-bold ${locale === 'en' ? 'bg-cyan-500/30 text-cyan-100' : 'bg-slate-700/50 text-slate-400'}`}>English</button>
+              </div>
+            </div>
+            <button onClick={() => setIsSettingsOpen(false)} className="w-full py-3 game-button text-white font-bold rounded-md text-sm">{t('settings.confirm')}</button>
           </div>
         </div>
       )}
@@ -1864,7 +1893,7 @@ const App: React.FC = () => {
           gameState={gameState} setGameState={setGameState} 
           setDialogContent={setDialogLines} setDialogImage={setDialogImage}
           onGameOver={(summary) => { setTimeout(() => gameAudio.stopMusic(), 0); setIsRunMusicReady(false); if (activeNpcChat) finalizeMikuChatMemory(activeNpcChat); setActiveNpcChat(null); recordRun(summary); setGameState('MENU'); setIsGameOver(true); setIntroComplete(true); }}
-          onWin={() => { setGameState('ENDING'); setDialogLines(LYRICS.ending); setDialogImage(IDLE_SPRITE_URLS[0]); }}
+          onWin={() => { setGameState('ENDING'); setDialogLines((locale === 'zh' ? LYRICS : LYRICS_EN).ending); setDialogImage(IDLE_SPRITE_URLS[0]); }}
           onRunIntroStart={() => {
             void gameAudio.unlock();
             setIsRunMusicReady(true);
@@ -1885,7 +1914,7 @@ const App: React.FC = () => {
         <div className="absolute inset-0 main-menu-screen flex flex-col items-center justify-center text-center p-4 z-40">
           {isGameOver ? (
              <div className="animate-in fade-in zoom-in duration-500 flex flex-col items-center gap-6 w-full max-w-4xl">
-               <h1 className="text-5xl md:text-7xl text-cyan-100 font-bold pixel-font drop-shadow-[0_0_30px_rgba(34,211,238,0.42)]">调查结算</h1>
+               <h1 className="text-5xl md:text-7xl text-cyan-100 font-bold pixel-font drop-shadow-[0_0_30px_rgba(34,211,238,0.42)]">{t('gameover.title')}</h1>
                {lastRunSummary && (
                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 w-full">
                    <div className="game-panel p-4 rounded-lg text-left">
@@ -1908,24 +1937,24 @@ const App: React.FC = () => {
                )}
                <div className="grid md:grid-cols-[0.85fr_1.15fr] gap-4 w-full">
                  <div className="game-panel rounded-lg p-4 text-left">
-                   <h2 className="text-cyan-300 font-bold mb-3">本局成绩</h2>
-                   <div className="text-sm text-slate-300">分数</div>
+                   <h2 className="text-cyan-300 font-bold mb-3">{t('gameover.thisRun')}</h2>
+                   <div className="text-sm text-slate-300">{t('gameover.scoreLabel')}</div>
                    <div className="text-4xl text-yellow-300 font-bold mb-3">{lastRunSummary?.score.toLocaleString() ?? '0'}</div>
                    {authUser ? (
                      <div className="space-y-3">
-                       <div className="text-sm text-slate-300">已登录为 <span className="text-cyan-200 font-bold">{authUser.username}</span></div>
+                       <div className="text-sm text-slate-300">{t('gameover.loggedInAs')}<span className="text-cyan-200 font-bold">{authUser.username}</span></div>
                        <div className="text-sm text-yellow-200">
-                         {uploadedScoreId ? '本局成绩已上传到全球排行榜' : uploadBusy ? '正在上传本局成绩...' : '正在等待上传本局成绩'}
+                         {uploadedScoreId ? t('gameover.upload.done') : uploadBusy ? t('gameover.upload.uploading') : t('gameover.upload.waiting')}
                        </div>
                        {!uploadedScoreId && !uploadBusy && (
-                         <button onClick={() => void submitGlobalScore()} className="px-4 py-2 bg-yellow-400 text-slate-950 font-bold rounded-md hover:bg-yellow-300 transition-colors">重新上传</button>
+                         <button onClick={() => void submitGlobalScore()} className="px-4 py-2 bg-yellow-400 text-slate-950 font-bold rounded-md hover:bg-yellow-300 transition-colors">{t('gameover.reupload')}</button>
                        )}
-                       <button onClick={logout} className="px-4 py-2 game-button-secondary rounded-md">退出登录</button>
+                       <button onClick={logout} className="px-4 py-2 game-button-secondary rounded-md">{t('gameover.logout')}</button>
                      </div>
                    ) : (
                      <div className="space-y-3">
-                       <p className="text-sm text-slate-300">登录后可上传成绩到全球排行榜。</p>
-                       <button onClick={() => { setAuthMode('register'); setIsAuthModalOpen(true); }} className="px-4 py-2 game-button text-white font-bold rounded-md">登录 / 注册</button>
+                       <p className="text-sm text-slate-300">{t('gameover.loginPrompt')}</p>
+                       <button onClick={() => { setAuthMode('register'); setIsAuthModalOpen(true); }} className="px-4 py-2 game-button text-white font-bold rounded-md">{t('gameover.loginOrRegister')}</button>
                      </div>
                    )}
                    {authMessage && <div className="mt-3 text-xs text-yellow-200">{authMessage}</div>}
@@ -1933,8 +1962,8 @@ const App: React.FC = () => {
 
                  <div className="game-panel rounded-lg p-4 w-full max-h-[60vh] overflow-y-auto">
                    <div className="flex items-center justify-between gap-3 mb-3">
-                     <h2 className="text-yellow-300 font-bold text-left">全球 TOP 50</h2>
-                     <button onClick={() => void fetchGlobalLeaderboard()} className="text-xs game-button-secondary px-2 py-1 rounded-md">刷新</button>
+                     <h2 className="text-yellow-300 font-bold text-left">{t('leaderboard.globalTop')}</h2>
+                     <button onClick={() => void fetchGlobalLeaderboard()} className="text-xs game-button-secondary px-2 py-1 rounded-md">{t('leaderboard.refresh')}</button>
                    </div>
                    {authUser && viewerLeaderboardEntry && !viewerIsInTopList && (
                      <div className="mb-3 grid grid-cols-[72px_1fr_90px_80px] gap-2 text-sm px-2 py-2 border border-cyan-400/70 bg-cyan-500/15 text-cyan-50 rounded-md">
@@ -1945,10 +1974,10 @@ const App: React.FC = () => {
                      </div>
                    )}
                    <div className="grid grid-cols-[48px_1fr_90px_80px] gap-2 text-xs text-slate-400 px-2 pb-2 border-b border-slate-800">
-                     <span>#</span><span>玩家</span><span>分数</span><span>距离</span>
+                     <span>#</span><span>{t('leaderboard.col.player')}</span><span>{t('leaderboard.col.score')}</span><span>{t('leaderboard.col.distance')}</span>
                    </div>
                    {displayedGlobalLeaderboard.length === 0 ? (
-                     <div className="text-slate-500 py-6">暂无全球记录</div>
+                     <div className="text-slate-500 py-6">{t('leaderboard.empty')}</div>
                    ) : displayedGlobalLeaderboard.map((entry) => {
                      const isViewerEntry = !!authUser && entry.userId === authUser.id;
                      return (
@@ -1962,28 +1991,32 @@ const App: React.FC = () => {
                    })}
                  </div>
                </div>
-               <button onClick={startRun} className="px-16 py-5 game-button font-bold pixel-font text-white text-xl rounded-md">再跑一局</button>
+               <button onClick={startRun} className="px-16 py-5 game-button font-bold pixel-font text-white text-xl rounded-md">{t('gameover.playAgain')}</button>
              </div>
           ) : (
-            !introComplete ? <TypewriterEffect text={[...LYRICS.intro]} onComplete={() => setIntroComplete(true)} /> : (
+            !introComplete ? <TypewriterEffect text={[...(locale === 'zh' ? LYRICS : LYRICS_EN).intro]} onComplete={() => setIntroComplete(true)} /> : (
               <div className="animate-in fade-in zoom-in duration-500 main-menu-shell rounded-lg px-6 py-7 md:px-10 md:py-9 text-left">
                 <div className="flex items-center justify-between gap-4 border-b border-cyan-800/70 pb-4">
-                  <div className="text-xs text-cyan-200 font-bold">CAT_NET / ENDLESS CASE</div>
-                  <div className="text-xs text-yellow-300 font-bold">RUN_01</div>
+                  <div className="text-xs text-cyan-200 font-bold">{t('menu.subtitle')}</div>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => setLocale('zh')} className={`text-xs px-2 py-1 rounded font-mono ${locale === 'zh' ? 'bg-cyan-500/30 text-cyan-100' : 'text-slate-500 hover:text-slate-300'}`}>中</button>
+                    <button onClick={() => setLocale('en')} className={`text-xs px-2 py-1 rounded font-mono ${locale === 'en' ? 'bg-cyan-500/30 text-cyan-100' : 'text-slate-500 hover:text-slate-300'}`}>EN</button>
+                    <div className="text-xs text-yellow-300 font-bold ml-2">{t('menu.tag')}</div>
+                  </div>
                 </div>
                 <div className="py-8 md:py-10">
-                  <h1 className="main-menu-title text-6xl md:text-8xl font-bold pixel-font leading-none">猫化行动</h1>
+                  <h1 className="main-menu-title text-6xl md:text-8xl font-bold pixel-font leading-none">{t('menu.title')}</h1>
                   <div className="mt-5 max-w-xl text-sm md:text-base leading-relaxed text-slate-300">
-                    城市异常扩散中。进入无尽调查，收集数据、躲避危险、把人类猫化真相带回来。
+                    {t('menu.description')}
                   </div>
                 </div>
                 <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-5 border-t border-cyan-800/70 pt-5">
                   <div className="grid grid-cols-3 gap-3 text-xs text-slate-400">
-                    <div><span className="block text-cyan-200 font-bold">移动</span>A / D</div>
-                    <div><span className="block text-cyan-200 font-bold">跳跃</span>空格</div>
-                    <div><span className="block text-cyan-200 font-bold">探测</span>F</div>
+                    <div><span className="block text-cyan-200 font-bold">{t('menu.move')}</span>A / D</div>
+                    <div><span className="block text-cyan-200 font-bold">{t('menu.jump')}</span>{locale === 'zh' ? '空格' : 'Space'}</div>
+                    <div><span className="block text-cyan-200 font-bold">{t('menu.probe')}</span>F</div>
                   </div>
-                  <button onClick={startRun} className="main-menu-button px-12 py-4 font-bold pixel-font text-xl rounded-md">开始调查</button>
+                  <button onClick={startRun} className="main-menu-button px-12 py-4 font-bold pixel-font text-xl rounded-md">{t('menu.start')}</button>
                 </div>
               </div>
             )
@@ -1995,26 +2028,26 @@ const App: React.FC = () => {
         <div className="absolute inset-0 z-50 bg-slate-950/90 flex items-center justify-center p-4">
           <div className="w-full max-w-sm game-panel-strong rounded-lg p-5 text-left">
             <div className="flex items-center justify-between gap-3 mb-4">
-              <h2 className="text-cyan-300 font-bold pixel-font text-xl">账号</h2>
+              <h2 className="text-cyan-300 font-bold pixel-font text-xl">{t('auth.title')}</h2>
               <button onClick={() => setIsAuthModalOpen(false)} className="h-8 w-8 game-button-secondary text-white rounded-md">×</button>
             </div>
             <div className="flex gap-2 text-sm mb-4">
-              <button onClick={() => setAuthMode('register')} className={`px-3 py-1 rounded-md border ${authMode === 'register' ? 'bg-cyan-600 border-cyan-300 text-white' : 'border-slate-600 text-slate-300'}`}>注册</button>
-              <button onClick={() => setAuthMode('login')} className={`px-3 py-1 rounded-md border ${authMode === 'login' ? 'bg-cyan-600 border-cyan-300 text-white' : 'border-slate-600 text-slate-300'}`}>登录</button>
+              <button onClick={() => setAuthMode('register')} className={`px-3 py-1 rounded-md border ${authMode === 'register' ? 'bg-cyan-600 border-cyan-300 text-white' : 'border-slate-600 text-slate-300'}`}>{t('auth.register')}</button>
+              <button onClick={() => setAuthMode('login')} className={`px-3 py-1 rounded-md border ${authMode === 'login' ? 'bg-cyan-600 border-cyan-300 text-white' : 'border-slate-600 text-slate-300'}`}>{t('auth.login')}</button>
             </div>
             <form onSubmit={(event) => { event.preventDefault(); void submitAuth(); }} className="space-y-3">
-              <input value={authUsername} onChange={(e) => setAuthUsername(e.target.value)} placeholder="用户名" className="w-full game-input rounded-md px-3 py-2" />
-              <input value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} placeholder="密码" type="password" className="w-full game-input rounded-md px-3 py-2" />
+              <input value={authUsername} onChange={(e) => setAuthUsername(e.target.value)} placeholder={t('auth.usernamePlaceholder')} className="w-full game-input rounded-md px-3 py-2" />
+              <input value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} placeholder={t('auth.passwordPlaceholder')} type="password" className="w-full game-input rounded-md px-3 py-2" />
               <button disabled={authBusy} className="w-full px-4 py-2 game-button text-white font-bold rounded-md disabled:opacity-50 disabled:cursor-not-allowed">
-                {authBusy ? '处理中' : authMode === 'register' ? '注册并登录' : '登录'}
+                {authBusy ? t('auth.submit.busy') : authMode === 'register' ? t('auth.submit.register') : t('auth.submit.login')}
               </button>
             </form>
             {lastRunSummary && !authUser && (
-              <div className="mt-3 text-xs text-yellow-200">登录成功后会自动上传刚才这局的成绩。</div>
+              <div className="mt-3 text-xs text-yellow-200">{t('auth.autoUploadHint')}</div>
             )}
             {authMessage && <div className="mt-3 text-xs text-slate-300">{authMessage}</div>}
             <div className="mt-3 text-[11px] leading-relaxed text-slate-500">
-              注册有频率限制和计算校验，成绩上传需要登录态和本局服务端令牌。
+              {t('auth.disclaimer')}
             </div>
           </div>
         </div>
@@ -2031,18 +2064,18 @@ const App: React.FC = () => {
       {gameState === 'PLAYING' && isMobile && (
         <div className="absolute inset-0 pointer-events-none z-30 touch-none select-none [-webkit-tap-highlight-color:transparent]">
           <div className="absolute bottom-[calc(env(safe-area-inset-bottom)+0.75rem)] left-[calc(env(safe-area-inset-left)+0.5rem)] w-[clamp(120px,26vw,176px)] h-[clamp(120px,26vw,176px)] pointer-events-auto opacity-70 active:opacity-95 transition-opacity">
-              <button aria-label="跳跃" className="absolute top-0 left-1/3 w-1/3 h-1/3 rounded-t-2xl touch-control-button" onTouchStart={(e) => handleTouchStart('up', e)} onTouchEnd={(e) => handleTouchEnd('up', e)} onTouchCancel={(e) => handleTouchEnd('up', e)} onContextMenu={preventCtx}>▲</button>
-              <button aria-label="下蹲" className="absolute bottom-0 left-1/3 w-1/3 h-1/3 rounded-b-2xl touch-control-button" onTouchStart={(e) => handleTouchStart('down', e)} onTouchEnd={(e) => handleTouchEnd('down', e)} onTouchCancel={(e) => handleTouchEnd('down', e)} onContextMenu={preventCtx}>▼</button>
-              <button aria-label="左移" className="absolute top-1/3 left-0 w-1/3 h-1/3 rounded-l-2xl touch-control-button" onTouchStart={(e) => handleTouchStart('left', e)} onTouchEnd={(e) => handleTouchEnd('left', e)} onTouchCancel={(e) => handleTouchEnd('left', e)} onContextMenu={preventCtx}>◀</button>
-              <button aria-label="右移" className="absolute top-1/3 right-0 w-1/3 h-1/3 rounded-r-2xl touch-control-button" onTouchStart={(e) => handleTouchStart('right', e)} onTouchEnd={(e) => handleTouchEnd('right', e)} onTouchCancel={(e) => handleTouchEnd('right', e)} onContextMenu={preventCtx}>▶</button>
+              <button aria-label={t('touch.jump')} className="absolute top-0 left-1/3 w-1/3 h-1/3 rounded-t-2xl touch-control-button" onTouchStart={(e) => handleTouchStart('up', e)} onTouchEnd={(e) => handleTouchEnd('up', e)} onTouchCancel={(e) => handleTouchEnd('up', e)} onContextMenu={preventCtx}>▲</button>
+              <button aria-label={t('touch.crouch')} className="absolute bottom-0 left-1/3 w-1/3 h-1/3 rounded-b-2xl touch-control-button" onTouchStart={(e) => handleTouchStart('down', e)} onTouchEnd={(e) => handleTouchEnd('down', e)} onTouchCancel={(e) => handleTouchEnd('down', e)} onContextMenu={preventCtx}>▼</button>
+              <button aria-label={t('touch.left')} className="absolute top-1/3 left-0 w-1/3 h-1/3 rounded-l-2xl touch-control-button" onTouchStart={(e) => handleTouchStart('left', e)} onTouchEnd={(e) => handleTouchEnd('left', e)} onTouchCancel={(e) => handleTouchEnd('left', e)} onContextMenu={preventCtx}>◀</button>
+              <button aria-label={t('touch.right')} className="absolute top-1/3 right-0 w-1/3 h-1/3 rounded-r-2xl touch-control-button" onTouchStart={(e) => handleTouchStart('right', e)} onTouchEnd={(e) => handleTouchEnd('right', e)} onTouchCancel={(e) => handleTouchEnd('right', e)} onContextMenu={preventCtx}>▶</button>
           </div>
           <div className="absolute bottom-[calc(env(safe-area-inset-bottom)+0.75rem)] right-[calc(env(safe-area-inset-right)+0.5rem)] flex gap-[clamp(0.5rem,1.5vw,1rem)] pointer-events-auto opacity-75 active:opacity-100 transition-opacity items-end text-white">
-             <button aria-label="互动" className="w-[clamp(48px,11vw,64px)] h-[clamp(48px,11vw,64px)] rounded-full touch-control-button font-bold text-lg flex items-center justify-center mb-[clamp(1.5rem,4vw,2.5rem)] text-yellow-100" onTouchStart={(e) => handleTouchStart('interact', e)} onTouchEnd={(e) => handleTouchEnd('interact', e)} onTouchCancel={(e) => handleTouchEnd('interact', e)} onContextMenu={preventCtx}>E</button>
+             <button aria-label={t('touch.interact')} className="w-[clamp(48px,11vw,64px)] h-[clamp(48px,11vw,64px)] rounded-full touch-control-button font-bold text-lg flex items-center justify-center mb-[clamp(1.5rem,4vw,2.5rem)] text-yellow-100" onTouchStart={(e) => handleTouchStart('interact', e)} onTouchEnd={(e) => handleTouchEnd('interact', e)} onTouchCancel={(e) => handleTouchEnd('interact', e)} onContextMenu={preventCtx}>E</button>
              <div className="flex flex-col gap-5">
-               <button aria-label="跳跃" className="w-[clamp(64px,15vw,96px)] h-[clamp(64px,15vw,96px)] rounded-full touch-control-button font-bold text-3xl flex items-center justify-center text-cyan-50" onTouchStart={(e) => handleTouchStart('up', e)} onTouchEnd={(e) => handleTouchEnd('up', e)} onTouchCancel={(e) => handleTouchEnd('up', e)} onContextMenu={preventCtx}>跳</button>
+               <button aria-label={t('touch.jump')} className="w-[clamp(64px,15vw,96px)] h-[clamp(64px,15vw,96px)] rounded-full touch-control-button font-bold text-3xl flex items-center justify-center text-cyan-50" onTouchStart={(e) => handleTouchStart('up', e)} onTouchEnd={(e) => handleTouchEnd('up', e)} onTouchCancel={(e) => handleTouchEnd('up', e)} onContextMenu={preventCtx}>跳</button>
                <div className="flex gap-4">
-                 <button aria-label="冲刺" className="w-[clamp(56px,13vw,80px)] h-[clamp(56px,13vw,80px)] rounded-full touch-control-button font-bold text-xl flex items-center justify-center text-blue-100" onTouchStart={(e) => handleTouchStart('dash', e)} onTouchEnd={(e) => handleTouchEnd('dash', e)} onTouchCancel={(e) => handleTouchEnd('dash', e)} onContextMenu={preventCtx}>D</button>
-                 <button aria-label="攻击" className="w-[clamp(56px,13vw,80px)] h-[clamp(56px,13vw,80px)] rounded-full touch-control-button font-bold text-xl flex items-center justify-center text-rose-100" onTouchStart={(e) => handleTouchStart('attack', e)} onTouchEnd={(e) => handleTouchEnd('attack', e)} onTouchCancel={(e) => handleTouchEnd('attack', e)} onContextMenu={preventCtx}>F</button>
+                 <button aria-label={t('touch.dash')} className="w-[clamp(56px,13vw,80px)] h-[clamp(56px,13vw,80px)] rounded-full touch-control-button font-bold text-xl flex items-center justify-center text-blue-100" onTouchStart={(e) => handleTouchStart('dash', e)} onTouchEnd={(e) => handleTouchEnd('dash', e)} onTouchCancel={(e) => handleTouchEnd('dash', e)} onContextMenu={preventCtx}>D</button>
+                 <button aria-label={t('touch.attack')} className="w-[clamp(56px,13vw,80px)] h-[clamp(56px,13vw,80px)] rounded-full touch-control-button font-bold text-xl flex items-center justify-center text-rose-100" onTouchStart={(e) => handleTouchStart('attack', e)} onTouchEnd={(e) => handleTouchEnd('attack', e)} onTouchCancel={(e) => handleTouchEnd('attack', e)} onContextMenu={preventCtx}>F</button>
                </div>
              </div>
           </div>
