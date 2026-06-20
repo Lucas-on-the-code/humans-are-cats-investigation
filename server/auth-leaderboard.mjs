@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { readFileSync } from 'node:fs';
+import { readFileSync, appendFileSync, statSync, unlinkSync } from 'node:fs';
 import { createHmac, pbkdf2Sync, randomBytes, timingSafeEqual, createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -286,15 +286,30 @@ const normalizeSummary = (value) => ({
   title: String(value?.title || '见习调查员').slice(0, 24),
 });
 
+// Persist the full event log of every rejected submission to a JSONL file so a
+// real mismatch can be replayed offline and the combo-replay drift pinned down.
+// The file self-truncates past REJECT_DUMP_MAX_BYTES so it can't fill the disk.
+// Override path with GAME_REJECT_DUMP; defaults to <app>/data/rejected-runs.jsonl.
+const REJECT_DUMP_PATH = process.env.GAME_REJECT_DUMP || join(fileURLToPath(new URL('..', import.meta.url)), 'data/rejected-runs.jsonl');
+const REJECT_DUMP_MAX_BYTES = 20 * 1024 * 1024;
+const dumpRejectedRun = (errorCode, diag, events) => {
+  try {
+    try { if (statSync(REJECT_DUMP_PATH).size > REJECT_DUMP_MAX_BYTES) unlinkSync(REJECT_DUMP_PATH); } catch {}
+    appendFileSync(REJECT_DUMP_PATH, JSON.stringify({ at: new Date().toISOString(), errorCode, ...diag, events }) + '\n');
+  } catch (e) { console.warn('[leaderboard] reject-dump failed', e.message); }
+};
+
 // Replay the client's score event log server-side to verify the claimed score.
 // Returns '' if OK, or an error code string if the score doesn't add up.
 const replayScore = (events, summary, runPayload) => {
   if (!Array.isArray(events)) return 'NO_EVENTS';
-  // Intentionally NO event-count cap. A legitimate endurance run can last a long
-  // time and pile up many events — any fixed ceiling would eventually reject a
-  // new legitimate record. Score-inflation fraud is caught by the SCORE_MISMATCH
-  // tolerance below; absurd payloads are bounded by the HTTP body-size limit at
-  // the reverse proxy (nginx client_max_body_size), not here.
+  // DoS guard, NOT a player cap. A human run is bounded by RUN_TTL (2h) × peak
+  // event rate (~20/s) ≈ 144k events; 200k is unreachable by any legitimate
+  // player, so endurance runs are never capped. Score fraud is caught by the
+  // SCORE_MISMATCH tolerance + validateScore ceiling; this only stops a malicious
+  // client forcing an unbounded replay loop. Defence-in-depth alongside the
+  // nginx client_max_body_size body limit.
+  if (events.length > 200000) return 'TOO_MANY_EVENTS';
   if (events.length === 0 && summary.score > 0) return 'SCORE_MISMATCH';
 
   let replayedScore = 0;
@@ -341,8 +356,12 @@ const replayScore = (events, summary, runPayload) => {
     replayedScore += TAXI_FREERIDE_BONUS_REPLAY;
   }
 
-  // Allow 20% tolerance for distance-score estimation variance
-  const tolerance = Math.max(replayedScore * 0.20, 800);
+  // Tolerance covers client frame-discretisation + combo-replay drift (combo is
+  // recomputed here from event timestamps; edge cases near the 4.5s combo window,
+  // and low-score runs where the absolute tolerance would otherwise shrink to a
+  // few hundred points, can misfire on legitimate play). 25% with a 1500 floor;
+  // the validateScore ceiling above still caps absolute fraud independent of this.
+  const tolerance = Math.max(replayedScore * 0.25, 1500);
   if (Math.abs(replayedScore - summary.score) > tolerance) return 'SCORE_MISMATCH';
 
   return '';
@@ -561,14 +580,14 @@ export const handleLeaderboardRequest = async (req, res) => {
       // tell which anti-cheat layer killed a legitimate score (validateScore and
       // replayScore return only an error code, so prod logs were blind).
       const diag = { user: user.id, runId: runPayload?.runId, score: summary.score, distance: summary.distance, survivalTime: summary.survivalTime, bestCombo: summary.bestCombo, events: events.length };
-      if (!runPayload) { console.warn('[leaderboard] reject BAD_RUN_TOKEN', diag); return writeJson(res, 400, { error: 'BAD_RUN_TOKEN' }); }
+      if (!runPayload) { console.warn('[leaderboard] reject BAD_RUN_TOKEN', diag); dumpRejectedRun('BAD_RUN_TOKEN', diag, events); return writeJson(res, 400, { error: 'BAD_RUN_TOKEN' }); }
       if (runPayload.userId && runPayload.userId !== user.id) return writeJson(res, 403, { error: 'RUN_USER_MISMATCH' });
       const scoreError = validateScore(summary, runPayload);
-      if (scoreError) { console.warn('[leaderboard] reject ' + scoreError, diag); return writeJson(res, 400, { error: scoreError }); }
+      if (scoreError) { console.warn('[leaderboard] reject ' + scoreError, diag); dumpRejectedRun(scoreError, diag, events); return writeJson(res, 400, { error: scoreError }); }
 
       // Replay-based anti-cheat: verify the score event log matches the claimed score
       const replayError = replayScore(events, summary, runPayload);
-      if (replayError) { console.warn('[leaderboard] reject ' + replayError, diag); return writeJson(res, 400, { error: replayError }); }
+      if (replayError) { console.warn('[leaderboard] reject ' + replayError, diag); dumpRejectedRun(replayError, diag, events); return writeJson(res, 400, { error: replayError }); }
 
       // Single transaction: replay check + insert score + record runId. SQLite's
       // writer lock serializes this atomically — replaces the old withDbMutex.
