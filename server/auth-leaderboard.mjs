@@ -639,6 +639,86 @@ export const handleRunStartRequest = async (req, res) => {
   return writeJson(res, 200, { runToken: signPayload(payload), runId: payload.runId });
 };
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const SURVEY_Q3_VALUES = ['yes', 'maybe', 'nah'];
+
+const sanitizeSurveyMulti = (value) => JSON.stringify(
+  Array.isArray(value)
+    ? value.filter((x) => typeof x === 'string').slice(0, 20).map((s) => cleanText(s, 60)).filter(Boolean)
+    : []
+);
+
+function buildSurveyAnswers(body, scopeKey, userId, guestId, email, ipHash, reachedEmail = 0) {
+  const now = Date.now();
+  const usageRow = stmt.getMikuUsage.get(scopeKey);
+  const usageSnapshot = usageRow ? usageRow.sessionCount : 0;
+  return {
+    scopeKey,
+    userId: userId || null,
+    guestId: guestId || null,
+    q1: cleanText(body.q1, 60) || null,
+    q2: sanitizeSurveyMulti(body.q2),
+    q3: SURVEY_Q3_VALUES.includes(body.q3) ? body.q3 : null,
+    q4: sanitizeSurveyMulti(body.q4),
+    q2Other: cleanText(body.q2Other, 400) || null,
+    q4Other: cleanText(body.q4Other, 400) || null,
+    email,
+    reachedEmail,
+    usageSnapshot,
+    completedAt: reachedEmail ? now : null,
+    createdAt: now,
+    updatedAt: now,
+    createdIpHash: ipHash,
+  };
+}
+
+export const handleSurveyRequest = async (req, res) => {
+  if (req.method !== 'POST') return writeJson(res, 405, { error: 'METHOD_NOT_ALLOWED' });
+  try {
+    const ipHash = hashIp(getIp(req));
+    if (hitRateLimit(`survey:${ipHash}`, 10, 60 * 1000)) {
+      return writeJson(res, 429, { error: 'RATE_LIMITED' });
+    }
+
+    const body = await readJsonBody(req);
+
+    // 登录用户优先（只读 session，不强制登录）；否则用 guestId
+    const { user } = getSessionUser(req);
+    const userId = user?.id || cleanText(body.userId, 80) || null;
+    const guestId = !userId ? cleanText(body.guestId, 120) : null;
+    const scopeKey = userId ? `u:${userId}` : (guestId ? `g:${guestId}` : null);
+    if (!scopeKey) return writeJson(res, 400, { error: 'BAD_REQUEST' });
+
+    // 邮箱：归一 + 校验
+    const emailRaw = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+    if (emailRaw && !EMAIL_RE.test(emailRaw)) {
+      return writeJson(res, 200, { ok: false, error: 'EMAIL_INVALID' });
+    }
+
+    // 邮箱跨 scopeKey 去重
+    let email = emailRaw || null;
+    if (email) {
+      const owner = stmt.findSurveyByEmail.get(email);
+      if (owner && owner.scopeKey !== scopeKey) {
+        // 邮箱已被别的设备登记：仍存问卷答案，但不覆盖 email
+        email = null;
+        const answers = buildSurveyAnswers(body, scopeKey, userId, guestId, null, ipHash);
+        stmt.upsertSurvey.run(answers);
+        return writeJson(res, 200, { ok: false, error: 'EMAIL_ALREADY_REGISTERED' });
+      }
+    }
+
+    const reachedEmail = body.reachedEmail ? 1 : 0;
+    const answers = buildSurveyAnswers(body, scopeKey, userId, guestId, email, ipHash, reachedEmail);
+    stmt.upsertSurvey.run(answers);
+
+    return writeJson(res, 200, { ok: true });
+  } catch (error) {
+    console.error('[auth] survey error', error);
+    return writeJson(res, 500, { error: 'INTERNAL_ERROR' });
+  }
+};
+
 export const handleLeaderboardRequest = async (req, res) => {
   try {
     const path = new URL(req.url || '/', 'http://local').pathname;

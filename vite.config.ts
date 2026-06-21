@@ -3,7 +3,7 @@ import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import { handleMikuChatEndRequest, handleMikuChatRequest } from './server/deepseek-miku.mjs';
 import { handleVocaloidLyricsRequest, handleVocaloidSearchRequest } from './server/vocaloid-knowledge.mjs';
-import { handleAuthRequest, handleLeaderboardRequest, handleMikuMemoryRequest, handleRunStartRequest } from './server/auth-leaderboard.mjs';
+import { handleAuthRequest, handleLeaderboardRequest, handleMikuMemoryRequest, handleRunStartRequest, handleSurveyRequest } from './server/auth-leaderboard.mjs';
 
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
@@ -40,6 +40,9 @@ export default defineConfig(({ mode }) => {
             });
             server.middlewares.use('/api/runs/start', (req, res) => {
               void handleRunStartRequest(req, res);
+            });
+            server.middlewares.use('/api/survey', (req, res) => {
+              void handleSurveyRequest(req, res);
             });
             server.middlewares.use('/api/leaderboard', (req, res) => {
               void handleLeaderboardRequest(req, res);
