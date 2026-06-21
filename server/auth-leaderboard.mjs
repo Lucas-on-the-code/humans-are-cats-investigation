@@ -683,8 +683,9 @@ export const handleSurveyRequest = async (req, res) => {
     const body = await readJsonBody(req);
 
     // 登录用户优先（只读 session，不强制登录）；否则用 guestId
+    // userId 只来自 session —— body.userId 不可信（IDOR）：未登录请求可在 body 里伪造任意 userId
     const { user } = getSessionUser(req);
-    const userId = user?.id || cleanText(body.userId, 80) || null;
+    const userId = user?.id || null;
     const guestId = !userId ? cleanText(body.guestId, 120) : null;
     const scopeKey = userId ? `u:${userId}` : (guestId ? `g:${guestId}` : null);
     if (!scopeKey) return writeJson(res, 400, { error: 'BAD_REQUEST' });
@@ -714,7 +715,7 @@ export const handleSurveyRequest = async (req, res) => {
 
     return writeJson(res, 200, { ok: true });
   } catch (error) {
-    console.error('[auth] survey error', error);
+    console.error('[auth] survey error', error?.message || 'UNKNOWN_ERROR');
     return writeJson(res, 500, { error: 'INTERNAL_ERROR' });
   }
 };
