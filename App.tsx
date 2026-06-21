@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useI18n } from './i18n';
 import { GameCanvas } from './components/GameCanvas';
 import { DialogBox } from './components/DialogBox';
+import { SurveyPopup } from './components/SurveyPopup';
 import { GameState, LeaderboardEntry, NpcChatSession, RunSummary, TouchInput } from './types';
 import { LYRICS, LYRICS_EN, IDLE_SPRITE_URLS } from './constants';
 import { gameAudio } from './utils/audioSystem';
@@ -12,6 +13,7 @@ import {
   consumePendingMikuGreeting,
   getMikuGuestId,
   inheritGuestMikuMemoryForAccount,
+  loadMikuMemory,
   mikuMemoryScopeForAccount,
   prepareMikuMemoryEndRequest,
   searchMikuTopicMemory,
@@ -1163,6 +1165,7 @@ const App: React.FC = () => {
   const [dialogImage, setDialogImage] = useState<string | undefined>(undefined);
   const [introComplete, setIntroComplete] = useState(false);
   const [isGameOver, setIsGameOver] = useState(false);
+  const [showSurvey, setShowSurvey] = useState(false);
   const [lastRunSummary, setLastRunSummary] = useState<RunSummary | null>(null);
   const [currentRunToken, setCurrentRunToken] = useState<string | null>(null);
   const [globalLeaderboard, setGlobalLeaderboard] = useState<GlobalLeaderboardEntry[]>([]);
@@ -1893,7 +1896,7 @@ const App: React.FC = () => {
           <GameCanvas 
           gameState={gameState} setGameState={setGameState} 
           setDialogContent={setDialogLines} setDialogImage={setDialogImage}
-          onGameOver={(summary) => { setTimeout(() => gameAudio.stopMusic(), 0); setIsRunMusicReady(false); if (activeNpcChat) finalizeMikuChatMemory(activeNpcChat); setActiveNpcChat(null); recordRun(summary); setGameState('MENU'); setIsGameOver(true); setIntroComplete(true); }}
+          onGameOver={(summary) => { setTimeout(() => gameAudio.stopMusic(), 0); setIsRunMusicReady(false); if (activeNpcChat) finalizeMikuChatMemory(activeNpcChat); setActiveNpcChat(null); recordRun(summary); setGameState('MENU'); try { const dismissed = localStorage.getItem('hac_survey_dismissed'); const scope = mikuMemoryScopeForAccount(authUser?.id); const mem = loadMikuMemory(scope); if (!dismissed && mem.sessionCount >= 1) { setShowSurvey(true); } } catch { /* localStorage 不可用（隐私模式）→ 不弹 */ } setIsGameOver(true); setIntroComplete(true); }}
           onWin={() => { setGameState('ENDING'); setDialogLines((locale === 'zh' ? LYRICS : LYRICS_EN).ending); setDialogImage(IDLE_SPRITE_URLS[0]); }}
           onRunIntroStart={() => {
             void gameAudio.unlock();
@@ -1993,6 +1996,14 @@ const App: React.FC = () => {
                  </div>
                </div>
                <button onClick={startRun} className="px-16 py-5 game-button font-bold pixel-font text-white text-xl rounded-md">{t('gameover.playAgain')}</button>
+               {showSurvey && (
+                 <SurveyPopup
+                   userId={authUser?.id ?? null}
+                   guestId={getMikuGuestId()}
+                   onComplete={() => { try { localStorage.setItem('hac_survey_dismissed', '1'); } catch { /* ignore */ } setShowSurvey(false); }}
+                   onDismiss={() => { try { localStorage.setItem('hac_survey_dismissed', '1'); } catch { /* ignore */ } setShowSurvey(false); }}
+                 />
+               )}
              </div>
           ) : (
             !introComplete ? <TypewriterEffect text={[...(locale === 'zh' ? LYRICS : LYRICS_EN).intro]} onComplete={() => setIntroComplete(true)} /> : (
