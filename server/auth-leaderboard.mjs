@@ -710,7 +710,7 @@ export const handleSurveyRequest = async (req, res) => {
       if (owner && owner.scopeKey !== scopeKey) {
         // 邮箱已被别的设备登记：仍存问卷答案，但不覆盖 email
         email = null;
-        const answers = buildSurveyAnswers(body, scopeKey, userId, guestId, null, ipHash);
+        const answers = buildSurveyAnswers(body, scopeKey, userId, guestId, null, ipHash, body.reachedEmail ? 1 : 0);
         stmt.upsertSurvey.run(answers);
         return writeJson(res, 200, { ok: false, error: 'EMAIL_ALREADY_REGISTERED' });
       }
