@@ -1,4 +1,5 @@
 import { buildVocaloidObservation } from './vocaloid-knowledge.mjs';
+import { getSessionUser, recordMikuSession } from './auth-leaderboard.mjs';
 
 const MIKU_SYSTEM_PROMPT = [
   '你是初音未来（Hatsune Miku），由 Crypton Future Media 发布的虚拟歌手。',
@@ -691,6 +692,18 @@ export const handleMikuChatEndRequest = async (req, res) => {
     if (request.messages.length === 0) {
       writeJson(res, 400, { error: 'EMPTY_MESSAGES' });
       return;
+    }
+
+    // 会话计数：收到有效 /end 调用即记一次（不依赖后续 LLM 是否成功）
+    // userId 只从 session 取（IDOR 防护）；未登录用 body.guestId
+    try {
+      const { user } = getSessionUser(req);
+      const userId = user?.id || null;
+      const guestId = !userId ? sanitizeText(body.guestId, 120) : null;
+      const scopeKey = userId ? `u:${userId}` : (guestId ? `g:${guestId}` : null);
+      recordMikuSession(scopeKey, request.sessionCount);
+    } catch (countError) {
+      console.error('[miku] usage count failed', countError?.message || 'UNKNOWN_ERROR');
     }
 
     const raw = await callDeepSeek(apiKey, [

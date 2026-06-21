@@ -672,6 +672,13 @@ function buildSurveyAnswers(body, scopeKey, userId, guestId, email, ipHash, reac
   };
 }
 
+// 供 /api/miku-chat/end 计数钩子调用：记录一次 miku 会话（信任客户端 max 语义）
+export const recordMikuSession = (scopeKey, sessionCount) => {
+  if (!scopeKey || !(sessionCount > 0)) return;
+  const now = Date.now();
+  stmt.upsertMikuUsage.run(scopeKey, sessionCount, now, now);
+};
+
 export const handleSurveyRequest = async (req, res) => {
   if (req.method !== 'POST') return writeJson(res, 405, { error: 'METHOD_NOT_ALLOWED' });
   try {
