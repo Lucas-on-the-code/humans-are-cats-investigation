@@ -71,6 +71,33 @@ db.exec(`
     memory TEXT NOT NULL,
     updatedAt INTEGER NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS miku_usage (
+    scopeKey TEXT PRIMARY KEY,
+    sessionCount INTEGER NOT NULL DEFAULT 0,
+    firstSessionAt INTEGER NOT NULL,
+    lastSessionAt INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS survey_responses (
+    scopeKey TEXT PRIMARY KEY,
+    userId TEXT,
+    guestId TEXT,
+    q1 TEXT,
+    q2 TEXT,
+    q3 TEXT,
+    q4 TEXT,
+    q2Other TEXT,
+    q4Other TEXT,
+    email TEXT,
+    reachedEmail INTEGER NOT NULL DEFAULT 0,
+    usageSnapshot INTEGER NOT NULL DEFAULT 0,
+    completedAt INTEGER,
+    createdAt INTEGER NOT NULL,
+    updatedAt INTEGER NOT NULL,
+    createdIpHash TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_survey_email ON survey_responses(email) WHERE email IS NOT NULL;
 `);
 
 // ---------- one-time migration from legacy JSON ----------
@@ -144,6 +171,25 @@ const stmt = {
   scoreById: db.prepare('SELECT * FROM scores WHERE id = ?'),
   getMikuMemory: db.prepare('SELECT memory FROM miku_memories WHERE userId = ?'),
   upsertMikuMemory: db.prepare('INSERT INTO miku_memories (userId, memory, updatedAt) VALUES (?, ?, ?) ON CONFLICT(userId) DO UPDATE SET memory = excluded.memory, updatedAt = excluded.updatedAt'),
+  upsertMikuUsage: db.prepare(`INSERT INTO miku_usage (scopeKey, sessionCount, firstSessionAt, lastSessionAt)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(scopeKey) DO UPDATE SET
+      sessionCount = MAX(miku_usage.sessionCount, excluded.sessionCount),
+      lastSessionAt = excluded.lastSessionAt`),
+  getMikuUsage: db.prepare('SELECT sessionCount FROM miku_usage WHERE scopeKey = ?'),
+  upsertSurvey: db.prepare(`INSERT INTO survey_responses
+    (scopeKey, userId, guestId, q1, q2, q3, q4, q2Other, q4Other, email, reachedEmail, usageSnapshot, completedAt, createdAt, updatedAt, createdIpHash)
+    VALUES (@scopeKey, @userId, @guestId, @q1, @q2, @q3, @q4, @q2Other, @q4Other, @email, @reachedEmail, @usageSnapshot, @completedAt, @createdAt, @updatedAt, @createdIpHash)
+    ON CONFLICT(scopeKey) DO UPDATE SET
+      userId = excluded.userId, guestId = excluded.guestId,
+      q1 = excluded.q1, q2 = excluded.q2, q3 = excluded.q3, q4 = excluded.q4,
+      q2Other = excluded.q2Other, q4Other = excluded.q4Other,
+      email = COALESCE(excluded.email, survey_responses.email),
+      reachedEmail = MAX(excluded.reachedEmail, survey_responses.reachedEmail),
+      usageSnapshot = MAX(excluded.usageSnapshot, survey_responses.usageSnapshot),
+      completedAt = COALESCE(excluded.completedAt, survey_responses.completedAt),
+      updatedAt = excluded.updatedAt`),
+  findSurveyByEmail: db.prepare('SELECT scopeKey FROM survey_responses WHERE email = ? LIMIT 1'),
 };
 
 // ---------- helpers (unchanged from JSON version) ----------
@@ -211,7 +257,7 @@ const bearerToken = (req) => {
 };
 
 // ---------- session / auth ----------
-const getSessionUser = (req) => {
+export const getSessionUser = (req) => {
   const now = Date.now();
   stmt.deleteExpiredSessions.run(now);
   const token = bearerToken(req);
