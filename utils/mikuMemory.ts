@@ -146,6 +146,15 @@ const getOrCreateGuestMemoryScope = () => {
   }
 };
 
+/**
+ * 返回当前设备的 Miku guest id（纯 uuid）。
+ * 登录用户改用 authUser.id；此函数仅给未登录的 /end 计数与 /survey 上报用。
+ */
+export const getMikuGuestId = (): string => {
+  const scope = getOrCreateGuestMemoryScope(); // 'guest:<uuid>' 或 fallback 'guest'
+  return scope.startsWith('guest:') ? scope.slice('guest:'.length) : scope;
+};
+
 export const mikuMemoryScopeForAccount = (accountId?: string | null) => {
   const cleanAccountId = normalizeMemoryScope(accountId);
   return accountId ? `user:${cleanAccountId}` : getOrCreateGuestMemoryScope();
