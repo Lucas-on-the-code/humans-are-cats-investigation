@@ -32,7 +32,7 @@ export const SurveyPopup = ({ userId, guestId, onComplete, onDismiss }: Props) =
     setArr(arr.includes(value) ? arr.filter((v) => v !== value) : [...arr, value]);
   };
 
-  const submit = async (override: { reachedEmail: number; completedAt: number | null; email?: string | null }) => {
+  const submit = async (override: { reachedEmail: number; email?: string | null }) => {
     setSubmitting(true);
     setStatus(null);
     try {
@@ -68,7 +68,7 @@ export const SurveyPopup = ({ userId, guestId, onComplete, onDismiss }: Props) =
   const handleClose = () => {
     // 中途关闭：有答案则落部分数据
     if (q1 || q2.length || q3 || q4.length) {
-      void submit({ reachedEmail: 0, completedAt: null });
+      void submit({ reachedEmail: 0 });
     }
     onDismiss();
   };
@@ -80,11 +80,14 @@ export const SurveyPopup = ({ userId, guestId, onComplete, onDismiss }: Props) =
   return (
     <div className="absolute right-4 top-4 md:right-6 md:top-6 z-50 w-[min(92vw,24rem)] game-panel rounded-lg p-4 text-left max-h-[88vh] overflow-y-auto bottom-4 md:bottom-auto inset-x-4 md:inset-x-auto">
       <div className="flex items-center justify-between mb-3">
-        <div className="flex gap-1" aria-label={t('survey.aria.progress', { n: Math.max(1, progressIndex + 1), total: progressTotal })}>
-          {PROGRESS_STEPS.map((_, i) => (
-            <span key={i} className={`w-2 h-2 rounded-full ${i <= progressIndex ? 'bg-cyan-400' : 'bg-slate-600'}`} />
-          ))}
-        </div>
+        {!isEmailStep && (
+          <div className="flex gap-1" aria-label={t('survey.aria.progress', { n: Math.max(1, progressIndex + 1), total: progressTotal })}>
+            {PROGRESS_STEPS.map((_, i) => (
+              <span key={i} className={`w-2 h-2 rounded-full ${i <= progressIndex ? 'bg-cyan-400' : 'bg-slate-600'}`} />
+            ))}
+          </div>
+        )}
+        {isEmailStep && <span className="text-xs text-cyan-200/70">✦</span>}
         <button onClick={handleClose} className="text-slate-400 hover:text-white text-xl leading-none" aria-label="close">×</button>
       </div>
 
@@ -179,8 +182,8 @@ export const SurveyPopup = ({ userId, guestId, onComplete, onDismiss }: Props) =
           <div className="flex justify-between gap-2 pt-1">
             <button onClick={() => setStep(q3 === 'nah' ? 'q4' : 'q3')} className="px-3 py-2 game-button-secondary text-sm rounded-md">{t('survey.back')}</button>
             <div className="flex gap-2">
-              <button disabled={submitting} onClick={() => { void submit({ reachedEmail: 1, completedAt: Date.now(), email: null }); }} className="px-3 py-2 game-button-secondary text-sm rounded-md">{t('survey.skip')}</button>
-              <button disabled={submitting || !email.trim()} onClick={() => { void submit({ reachedEmail: 1, completedAt: Date.now(), email: email.trim() }); }} className="px-4 py-2 game-button text-white text-sm rounded-md disabled:opacity-40">{submitting ? t('survey.submitting') : t('survey.cta')}</button>
+              <button disabled={submitting} onClick={() => { void submit({ reachedEmail: 1, email: null }); }} className="px-3 py-2 game-button-secondary text-sm rounded-md">{t('survey.skip')}</button>
+              <button disabled={submitting || !email.trim()} onClick={() => { void submit({ reachedEmail: 1, email: email.trim() }); }} className="px-4 py-2 game-button text-white text-sm rounded-md disabled:opacity-40">{submitting ? t('survey.submitting') : t('survey.cta')}</button>
             </div>
           </div>
         </div>
