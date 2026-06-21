@@ -401,7 +401,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const mapRhythmRef = useRef<MapRhythm>({ recentIds: [], recentFamilies: [], dangerStreak: 0 });
   const objectIdRef = useRef(1);
   const endedRef = useRef(false);
-  const scoreEventLogRef = useRef<ScoreEvent[]>([]);
+  // Aggregated score events keyed by `${type}|${base}|${mult}` → count. Aggregating
+  // at award time (instead of pushing one entry per event) keeps this bounded
+  // (~distinct combos) regardless of run length — a long run no longer builds a
+  // hundreds-of-thousands-element array that stalls GC / bloats the upload body.
+  const scoreEventLogRef = useRef<Record<string, number>>({});
   const screenShakeRef = useRef(0);
   const prevJumpRef = useRef(false);
   const prevActionRef = useRef(false);
@@ -690,7 +694,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     mapRhythmRef.current = { recentIds: [], recentFamilies: [], dangerStreak: 0 };
     objectIdRef.current = 1;
     endedRef.current = false;
-    scoreEventLogRef.current = [];
+    scoreEventLogRef.current = {};
     screenShakeRef.current = 0;
     prevJumpRef.current = false;
     prevActionRef.current = false;
@@ -814,7 +818,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const score = Math.round(base * stats.multiplier);
     stats.score += score;
     addFloatingText(`${label} +${score}`, x, y, combo ? '#ffe066' : '#9ee6ff', combo ? 18 : 15);
-    scoreEventLogRef.current.push({ t: now - stats.startedAt, type: label, base, mult: stats.multiplier });
+    const aggKey = `${label}|${base}|${stats.multiplier}`;
+    scoreEventLogRef.current[aggKey] = (scoreEventLogRef.current[aggKey] || 0) + 1;
   };
 
   const endRun = () => {
@@ -843,7 +848,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       bestCombo: stats.bestCombo,
       survivalTime: Math.floor((Date.now() - stats.startedAt) / 1000),
       title,
-      events: scoreEventLogRef.current,
+      events: Object.entries(scoreEventLogRef.current).map(([key, count]) => {
+        const [type, baseStr, multStr] = key.split('|');
+        return { type, base: Number(baseStr), mult: Number(multStr), count };
+      }),
     };
     // Fire onGameOver OFF the rAF callback. Safari can throttle rAF when WebAudio
     // hits an error state on the death frame (DEATH sfx + stopMusic source start/stop

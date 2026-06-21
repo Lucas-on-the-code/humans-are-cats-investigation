@@ -345,8 +345,13 @@ const replayScore = (events, summary, runPayload) => {
     const validBases = KNOWN_BASE_VALUES[type];
     if (!validBases || !validBases.has(base)) return 'INVALID_EVENT';
 
+    // Aggregated events (new clients) carry `count` = occurrences of (type,base,
+    // mult); legacy per-event entries have count = 1.
+    const count = e?.count !== undefined ? Math.floor(Number(e.count) || 0) : 1;
+    if (count < 1) return 'INVALID_EVENT';
+
     // Count taxi rides for freeride bonus
-    if (type === 'TAXI RIDE') taxiRides++;
+    if (type === 'TAXI RIDE') taxiRides += count;
 
     // New clients send the actual multiplier at award time (exact match to client
     // scoring — immune to combo-state drift). Legacy clients omit it; we recompute.
@@ -363,7 +368,7 @@ const replayScore = (events, summary, runPayload) => {
       appliedMult = m;
     }
 
-    replayedScore += Math.round(base * appliedMult);
+    replayedScore += Math.round(base * appliedMult) * count;
   }
 
   // Add distance-based score (not tracked as discrete events; estimated from summary).

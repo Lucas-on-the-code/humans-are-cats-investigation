@@ -132,13 +132,19 @@ export interface Item extends Position {
 }
 
 export interface ScoreEvent {
-  t: number;
+  /** Per-event timestamp (ms since run start). Absent in aggregated events. */
+  t?: number;
   type: string;
   base: number;
   /** Combo multiplier in effect when this score was awarded (client authoritative).
    *  Sent by new clients so the server replays exact scoring without recomputing
    *  combo (which drifts — client combo resets on damage, invisible to server). */
   mult?: number;
+  /** Aggregated occurrence count. New clients send events aggregated by (type,base,
+   *  mult) so a long run (4651m can rack up hundreds of thousands of per-event
+   *  entries → multi-MB upload body + GC stall that freezes the page on upload).
+   *  Absent on legacy per-event entries (count = 1). */
+  count?: number;
 }
 
 export interface RunSummary {
