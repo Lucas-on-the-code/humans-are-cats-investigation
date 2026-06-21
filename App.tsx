@@ -10,6 +10,7 @@ import {
   buildMikuMemoryBrief,
   commitMikuMemoryEndResult,
   consumePendingMikuGreeting,
+  getMikuGuestId,
   inheritGuestMikuMemoryForAccount,
   mikuMemoryScopeForAccount,
   prepareMikuMemoryEndRequest,
@@ -1494,7 +1495,7 @@ const App: React.FC = () => {
     void fetch('/api/miku-chat/end', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...prepared.request, locale }),
+      body: JSON.stringify({ ...prepared.request, guestId: getMikuGuestId(), locale }),
     })
       .then(async (res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
