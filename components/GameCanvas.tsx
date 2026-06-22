@@ -292,13 +292,11 @@ const isHighEndDesktop = () => {
   const ua = navigator.userAgent || '';
   if (/iPhone|iPad|iPod/i.test(ua)) return false;
   if (navigator.platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1) return false;
-  const cores = navigator.hardwareConcurrency || 8;
-  const memory = 'deviceMemory' in navigator
-    ? Number((navigator as Navigator & { deviceMemory?: number }).deviceMemory) || 8
-    : 8;
-  const shortEdge = Math.min(window.innerWidth, window.innerHeight);
-  // High-end tier (must exceed the mid-end thresholds from the perf useEffect).
-  return cores > 8 && memory > 8 && shortEdge > 1080;
+  // All non-touch desktop PCs downscale. The previous guard was dead code:
+  // navigator.deviceMemory is spec-capped at 8 (fingerprinting), so `memory > 8`
+  // was always false; and `shortEdge > 1080` (strict) missed every 1080p
+  // fullscreen. Net effect: downscale never fired and 1920x1080 measured ~47fps.
+  return true;
 };
 
 const getViewportDims = () => {
