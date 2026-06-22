@@ -199,7 +199,7 @@ interface LayerDim {
   h: number;
 }
 
-type DrawableAsset = HTMLImageElement;
+type DrawableAsset = HTMLImageElement | ImageBitmap;
 type ObstacleType = 'BARRIER' | 'LOW_BAR';
 
 interface RunnerObstacle extends Position {
@@ -455,7 +455,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   }, [gameState]);
 
   const getAssetSize = (asset: DrawableAsset) => {
-    return { width: asset.naturalWidth, height: asset.naturalHeight };
+    if (asset instanceof HTMLImageElement) return { width: asset.naturalWidth, height: asset.naturalHeight };
+    return { width: asset.width, height: asset.height };
   };
 
   const nextId = () => objectIdRef.current++;
@@ -595,8 +596,20 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         const img = new Image();
         img.decoding = 'async';
         img.src = src;
-        img.onload = () => {
+        img.onload = async () => {
           if (settled) return;
+          // createImageBitmap 预解码：避免首次 drawImage 在主线程同步解码大图(198-267ms/张)
+          if (typeof createImageBitmap === 'function') {
+            try {
+              const bmp = await createImageBitmap(img);
+              if (settled) { try { bmp.close(); } catch { /* ignore */ } return; }
+              if (mounted) tempImages[key] = bmp;
+              done();
+              return;
+            } catch {
+              // createImageBitmap 失败 → 回退到 HTMLImageElement
+            }
+          }
           if (mounted) tempImages[key] = img;
           done();
         };
