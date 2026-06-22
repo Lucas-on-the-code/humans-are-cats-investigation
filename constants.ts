@@ -204,14 +204,14 @@ export const NPC_VARIANT_2_URLS = [
 ];
 
 export const SCENE_IMAGES = {
-  cloud: "/scene/cloud.png",
-  tree: "/scene/tree.png",
-  house: "/scene/house.png",
-  sky: "/scene/sky.png",
-  farHouse: "/scene/farHouse.png",
-  midHouse: "/scene/midHouse.png",
+  cloud: "/scene/cloud.png?v=2",
+  tree: "/scene/tree.png?v=2",
+  house: "/scene/house.png?v=2",
+  sky: "/scene/sky.png?v=2",
+  farHouse: "/scene/farHouse.png?v=2",
+  midHouse: "/scene/midHouse.png?v=2",
   sidewalk: "/scene/sidewalk.png",
-  lamp: "/scene/lamp.png"
+  lamp: "/scene/lamp.png?v=2"
 };
 
 export const AUDIO_URLS = {
