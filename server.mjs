@@ -4,7 +4,7 @@ import { join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { handleMikuChatEndRequest, handleMikuChatRequest } from './server/deepseek-miku.mjs';
 import { handleVocaloidLyricsRequest, handleVocaloidSearchRequest } from './server/vocaloid-knowledge.mjs';
-import { handleAuthRequest, handleLeaderboardRequest, handleMikuMemoryRequest, handleRunStartRequest, handleSurveyRequest } from './server/auth-leaderboard.mjs';
+import { handleAuthRequest, handleLeaderboardRequest, handleMikuMemoryRequest, handleRunStartRequest, handleSurveyRequest, handleSurveyStatsRequest } from './server/auth-leaderboard.mjs';
 
 const root = fileURLToPath(new URL('.', import.meta.url));
 const distDir = join(root, 'dist');
@@ -60,6 +60,10 @@ createServer(async (req, res) => {
   }
   if (req.url?.startsWith('/api/runs/start')) {
     await handleRunStartRequest(req, res);
+    return;
+  }
+  if (req.url?.startsWith('/api/survey/stats')) {
+    await handleSurveyStatsRequest(req, res);
     return;
   }
   if (req.url?.startsWith('/api/survey')) {

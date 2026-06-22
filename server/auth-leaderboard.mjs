@@ -679,6 +679,26 @@ export const recordMikuSession = (scopeKey, sessionCount) => {
   stmt.upsertMikuUsage.run(scopeKey, sessionCount, now, now);
 };
 
+export const handleSurveyStatsRequest = async (req, res) => {
+  if (req.method !== 'GET') return writeJson(res, 405, { error: 'METHOD_NOT_ALLOWED' });
+  try {
+    const countOf = (sql) => db.prepare(sql).get().c;
+    const dist = (sql) => db.prepare(sql).all().map((r) => ({ k: r.k, c: r.c }));
+    const total = countOf('SELECT COUNT(*) AS c FROM survey_responses');
+    const withEmail = countOf('SELECT COUNT(*) AS c FROM survey_responses WHERE email IS NOT NULL');
+    const completed = countOf('SELECT COUNT(*) AS c FROM survey_responses WHERE completedAt IS NOT NULL');
+    const mikuUsers = countOf('SELECT COUNT(*) AS c FROM miku_usage WHERE sessionCount >= 1');
+    const q1 = dist('SELECT q1 AS k, COUNT(*) AS c FROM survey_responses WHERE q1 IS NOT NULL GROUP BY q1 ORDER BY c DESC');
+    const q3 = dist('SELECT q3 AS k, COUNT(*) AS c FROM survey_responses WHERE q3 IS NOT NULL GROUP BY q3 ORDER BY c DESC');
+    const q2 = dist('SELECT value AS k, COUNT(*) AS c FROM survey_responses, json_each(q2) WHERE q2 IS NOT NULL GROUP BY value ORDER BY c DESC');
+    const q4 = dist('SELECT value AS k, COUNT(*) AS c FROM survey_responses, json_each(q4) WHERE q4 IS NOT NULL GROUP BY value ORDER BY c DESC');
+    writeJson(res, 200, { total, withEmail, completed, mikuUsers, q1, q2, q3, q4 });
+  } catch (e) {
+    console.error('[auth] survey-stats error', e?.message || 'UNKNOWN_ERROR');
+    writeJson(res, 500, { error: 'INTERNAL_ERROR' });
+  }
+};
+
 export const handleSurveyRequest = async (req, res) => {
   if (req.method !== 'POST') return writeJson(res, 405, { error: 'METHOD_NOT_ALLOWED' });
   try {

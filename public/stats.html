@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Miku 问卷实时统计</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 24px; background: #020617; color: #e2e8f0;
+         font-family: 'Space Mono', 'PingFang SC', ui-monospace, monospace; }
+  h1 { color: #67e8f9; font-size: 1.4rem; margin: 0 0 4px; }
+  .sub { color: #64748b; font-size: 0.8rem; margin-bottom: 20px; }
+  .funnel { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 24px; }
+  .stat { background: #0f172a; border: 1px solid #1e293b; border-radius: 8px;
+          padding: 12px 16px; min-width: 110px; }
+  .stat .n { font-size: 1.8rem; font-weight: bold; color: #67e8f9; }
+  .stat .l { font-size: 0.7rem; color: #94a3b8; margin-top: 2px; }
+  section { background: #0f172a; border: 1px solid #1e293b; border-radius: 8px;
+            padding: 16px; margin-bottom: 16px; }
+  section h2 { color: #67e8f9; font-size: 0.95rem; margin: 0 0 12px; }
+  .row { display: flex; align-items: center; gap: 10px; margin: 6px 0; font-size: 0.82rem; }
+  .label { width: 46%; color: #cbd5e1; }
+  .bar { flex: 1; height: 18px; background: #1e293b; border-radius: 4px; overflow: hidden; }
+  .bar > div { height: 100%; background: linear-gradient(90deg, #0891b2, #67e8f9); }
+  .count { width: 40px; text-align: right; color: #94a3b8; font-size: 0.78rem; }
+  .empty { color: #475569; font-style: italic; font-size: 0.8rem; }
+  .refresh { color: #475569; font-size: 0.72rem; margin-top: 16px; }
+</style>
+</head>
+<body>
+<h1>Miku 问卷实时统计</h1>
+<div class="sub" id="sub">加载中…</div>
+<div class="funnel" id="funnel"></div>
+<section><h2>Q1 · AI 角色扮演熟悉度</h2><div id="q1"></div></section>
+<section><h2>Q2 · 痛点（多选）</h2><div id="q2"></div></section>
+<section><h2>Q3 · 新作意愿</h2><div id="q3"></div></section>
+<section><h2>Q4 · 不感兴趣原因（多选，仅"算了"分支）</h2><div id="q4"></div></section>
+<div class="refresh" id="ts"></div>
+
+<script>
+const Q3_LABELS = { yes: '要！想多了解', maybe: '看看吧', nah: '算了' };
+function bars(id, dist) {
+  const el = document.getElementById(id);
+  if (!dist || dist.length === 0) { el.innerHTML = '<div class="empty">暂无数据</div>'; return; }
+  const max = Math.max(...dist.map(d => d.c), 1);
+  el.innerHTML = dist.map(d => {
+    const label = id === 'q3' ? (Q3_LABELS[d.k] || d.k) : d.k;
+    return `<div class="row"><div class="label">${label}</div>
+      <div class="bar"><div style="width:${(d.c/max*100).toFixed(0)}%"></div></div>
+      <div class="count">${d.c}</div></div>`;
+  }).join('');
+}
+async function load() {
+  try {
+    const r = await fetch('/api/survey/stats', { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    document.getElementById('sub').textContent =
+      `实时聚合（不含邮箱/原文，隐私保护）· 每 30 秒自动刷新`;
+    document.getElementById('funnel').innerHTML = [
+      ['total', '问卷提交'], ['completed', '走完'], ['withEmail', '留邮箱'], ['mikuUsers', '聊过 Miku 设备']
+    ].map(([k, l]) => `<div class="stat"><div class="n">${d[k]}</div><div class="l">${l}</div></div>`).join('');
+    bars('q1', d.q1); bars('q2', d.q2); bars('q3', d.q3); bars('q4', d.q4);
+    document.getElementById('ts').textContent = '最后更新：' + new Date().toLocaleTimeString('zh-CN');
+  } catch (e) {
+    document.getElementById('sub').textContent = '加载失败：' + e.message;
+  }
+}
+load();
+setInterval(load, 30000);
+</script>
+</body>
+</html>
