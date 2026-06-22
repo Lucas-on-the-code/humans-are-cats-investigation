@@ -438,6 +438,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = React.memo(({
   const prevInteractRef = useRef(false);
   const pointerActionRef = useRef(false);
   const mikuProximityRef = useRef<Set<number>>(new Set());
+  // Reusable scratch Set for the per-frame "which miku NPCs overlap the talk
+  // zone" computation. Cleared + refilled every frame instead of allocating a
+  // fresh Set, which showed up as a steady GC pressure source during runs.
+  const nearbyMikuScratchRef = useRef<Set<number>>(new Set());
+  // Mirror of `activeRide` computed in update(), read by draw(). Lets draw()
+  // skip its own carsRef.some() scan — one fewer closure alloc per frame and
+  // a tiny O(n) saving. Updated at the end of update() each physics step.
+  const playerInCarRef = useRef<boolean>(false);
   const trafficSpawnerRef = useRef({ nextAt: 0, taxiDueAt: 0 });
   const deathAnimRef = useRef({ active: false, startedAt: 0 });
   const introDropRef = useRef<{ phase: 'waiting' | 'jumping' | 'done'; startedAt: number; startCameraX: number }>({
@@ -511,12 +519,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = React.memo(({
     if (!soundKey || !hasAudioUrl(soundKey)) return;
     gameAudio.playSfx(soundKey);
   };
-
-  useEffect(() => {
-    const updateVisibility = () => { isTabVisibleRef.current = !document.hidden; };
-    document.addEventListener('visibilitychange', updateVisibility);
-    return () => document.removeEventListener('visibilitychange', updateVisibility);
-  }, []);
 
   useEffect(() => {
     const cores = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 8 : 8;
@@ -1720,7 +1722,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = React.memo(({
 
         const viewLeft = cameraRef.current.x - CLEAN_BEHIND;
         const viewRight = cameraRef.current.x + virtualWidth + CLEAN_BEHIND;
-        carsRef.current = carsRef.current.filter((o) => o.x + o.width > viewLeft && o.x < viewRight);
+        // compactAlive mutates in place — avoids the per-frame array allocation
+        // that .filter() would create during the death animation branch.
+        compactAlive(carsRef.current, (o) => o.x + o.width > viewLeft && o.x < viewRight);
 
         const elapsed = now - deathAnimRef.current.startedAt;
         if (elapsed > DEATH_ANIM_MAX_MS || p.y > BASE_HEIGHT + 180) endRun();
@@ -1745,7 +1749,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = React.memo(({
       prevInteractRef.current = interactPressed;
 
       const heat = getDistanceHeat(stats.distance);
-      const ridingCar = carsRef.current.find((car) => car.occupied);
+      // Manual single-pass scan instead of Array.prototype.find — avoids the
+      // closure allocation per frame. carsRef stays small (<~10), so the scan
+      // is cheap and produces zero garbage.
+      let ridingCar: RideableCar | undefined;
+      for (let ci = 0; ci < carsRef.current.length; ci++) {
+        const c = carsRef.current[ci];
+        if (c.occupied) { ridingCar = c; break; }
+      }
       if (p.dashCooldown > 0) p.dashCooldown = Math.max(0, p.dashCooldown - 16 * dtScale);
       if (p.dashTime > 0) p.dashTime = Math.max(0, p.dashTime - 16 * dtScale);
       else if (p.isDashing) p.isDashing = false;
@@ -1783,6 +1794,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = React.memo(({
           p.invulnerableTime = Math.max(p.invulnerableTime, 450);
           awardScore(620, 'TAXI RIDE', p.x, p.y - 20);
           addFloatingText(t('float.disembark'), p.x + p.width / 2, p.y - 28, '#9ee6ff', 18);
+          ridingCar = undefined; // disembarked this frame — clear so activeRide below is false
         }
       } else {
       if (!isTextInputActive && (keys['shift'] || touch.dash) && p.dashCooldown <= 0 && !p.isDashing) {
@@ -1860,6 +1872,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = React.memo(({
       });
       if (boardingCar && boardingCar.canRide && !boardingCar.used && (interactEdge || slidePressed)) {
         boardingCar.occupied = true;
+        ridingCar = boardingCar; // keep local in sync so activeRide below is correct this frame
         boardingCar.vx = CAR_CRUISE_SPEED;
         boardingCar.rideUntilX = boardingCar.x + CAR_RIDE_DISTANCE;
         p.x = boardingCar.x + boardingCar.width * 0.5 - p.width / 2;
@@ -1873,13 +1886,25 @@ export const GameCanvas: React.FC<GameCanvasProps> = React.memo(({
         addFloatingText(taxiText, p.x + p.width / 2, p.y - 28, '#66f2c2', 18);
         playSound('COLLECT');
       }
-      const activeRide = carsRef.current.some((car) => car.occupied);
+      // ridingCar (or boardingCar if it was just boarded this frame) already
+      // tells us whether the player is in an occupied car — no need to re-scan
+      // carsRef. boardingCar alone does NOT count as a ride (it's only the
+      // candidate); the 1866 branch flips ridingCar=boardingCar when occupied,
+      // so this single check is correct.
+      const activeRide = !!ridingCar;
+      playerInCarRef.current = activeRide; // mirror for draw() to consume without re-scanning
       const playerHitbox = getPlayerHitbox();
-      const nearbyMikuIds = new Set(
-        npcsRef.current
-          .filter((npc) => !npc.scanned && npc.chatKind === 'miku' && rectsOverlap(playerHitbox, getNpcTalkZone(npc)))
-          .map((npc) => npc.id)
-      );
+      // Reuse a persistent scratch Set instead of allocating new Set + filter
+      // + map arrays every frame. Clear then refill; behavior matches the
+      // previous "new Set(filter().map())" exactly.
+      const nearbyMikuIds = nearbyMikuScratchRef.current;
+      nearbyMikuIds.clear();
+      for (let mi = 0; mi < npcsRef.current.length; mi++) {
+        const npc = npcsRef.current[mi];
+        if (!npc.scanned && npc.chatKind === 'miku' && rectsOverlap(playerHitbox, getNpcTalkZone(npc))) {
+          nearbyMikuIds.add(npc.id);
+        }
+      }
       // I7: deleting the current element during Set.forEach is defined behavior per spec
       // (deletes of already-visited elements are no-ops; unvisited ones are skipped).
       mikuProximityRef.current.forEach((id) => {
@@ -1887,11 +1912,21 @@ export const GameCanvas: React.FC<GameCanvasProps> = React.memo(({
       });
 
       if (!activeRide && !boardingCar && !activeNpcChatTargetRef.current) {
-        const autoTalkMiku = npcsRef.current
-          .filter((npc) => !npc.scanned && npc.chatKind === 'miku' && !dismissedMikuIdsRef.current?.has(npc.id) && nearbyMikuIds.has(npc.id) && !mikuProximityRef.current.has(npc.id))
-          .sort((a, b) => Math.abs(a.x + a.width / 2 - (p.x + p.width / 2)) - Math.abs(b.x + b.width / 2 - (p.x + p.width / 2)))[0];
+        // Single-pass closest-match instead of filter + sort + [0] (which
+        // allocated a temp array + comparator closures each frame).
+        const dismissed = dismissedMikuIdsRef.current;
+        const proximity = mikuProximityRef.current;
+        let autoTalkMiku: NPC | undefined;
+        let autoTalkMikuDist = Infinity;
+        for (let ai = 0; ai < npcsRef.current.length; ai++) {
+          const npc = npcsRef.current[ai];
+          if (npc.scanned || npc.chatKind !== 'miku') continue;
+          if (dismissed?.has(npc.id) || !nearbyMikuIds.has(npc.id) || proximity.has(npc.id)) continue;
+          const d = Math.abs(npc.x + npc.width / 2 - (p.x + p.width / 2));
+          if (d < autoTalkMikuDist) { autoTalkMikuDist = d; autoTalkMiku = npc; }
+        }
         if (autoTalkMiku) {
-          mikuProximityRef.current.add(autoTalkMiku.id);
+          proximity.add(autoTalkMiku.id);
           p.vx = 0;
           p.isDashing = false;
           p.isSliding = false;
@@ -1902,9 +1937,16 @@ export const GameCanvas: React.FC<GameCanvasProps> = React.memo(({
       }
 
       if (!activeRide && !boardingCar && interactEdge) {
-        const talkNpc = npcsRef.current
-          .filter((npc) => !npc.scanned && npc.chatKind === 'miku' && rectsOverlap(playerHitbox, getNpcTalkZone(npc)))
-          .sort((a, b) => Math.abs(a.x + a.width / 2 - (p.x + p.width / 2)) - Math.abs(b.x + b.width / 2 - (p.x + p.width / 2)))[0];
+        // Same single-pass closest-match pattern for interact-with-miku.
+        let talkNpc: NPC | undefined;
+        let talkNpcDist = Infinity;
+        for (let ti = 0; ti < npcsRef.current.length; ti++) {
+          const npc = npcsRef.current[ti];
+          if (npc.scanned || npc.chatKind !== 'miku') continue;
+          if (!rectsOverlap(playerHitbox, getNpcTalkZone(npc))) continue;
+          const d = Math.abs(npc.x + npc.width / 2 - (p.x + p.width / 2));
+          if (d < talkNpcDist) { talkNpcDist = d; talkNpc = npc; }
+        }
         if (talkNpc) {
           p.vx = 0;
           p.isDashing = false;
@@ -1913,9 +1955,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = React.memo(({
           openNpcChat(talkNpc);
           return;
         }
-        const talkPedestrian = pedestriansRef.current
-          .filter((ped) => rectsOverlap(playerHitbox, getNpcTalkZone(ped)))
-          .sort((a, b) => Math.abs(a.x + a.width / 2 - (p.x + p.width / 2)) - Math.abs(b.x + b.width / 2 - (p.x + p.width / 2)))[0];
+        // And again for interact-with-pedestrian.
+        let talkPedestrian: DecorativePedestrian | undefined;
+        let talkPedestrianDist = Infinity;
+        for (let pi = 0; pi < pedestriansRef.current.length; pi++) {
+          const ped = pedestriansRef.current[pi];
+          if (!rectsOverlap(playerHitbox, getNpcTalkZone(ped))) continue;
+          const d = Math.abs(ped.x + ped.width / 2 - (p.x + p.width / 2));
+          if (d < talkPedestrianDist) { talkPedestrianDist = d; talkPedestrian = ped; }
+        }
         if (talkPedestrian) {
           p.vx = 0;
           p.isDashing = false;
@@ -2023,13 +2071,28 @@ export const GameCanvas: React.FC<GameCanvasProps> = React.memo(({
         }
       });
 
-      projectilesRef.current.forEach((pr) => {
-        if (pr.life <= 0) return; // R4: don't move/iterate an already-dead projectile
+      // Compact dead projectiles BEFORE the nested loop so the inner pass
+      // only walks live projectiles (also lets the outer forEach drop the
+      // per-item life<=0 guard). Then a coarse horizontal-distance prefilter
+      // on the inner NPC pass skips NPCs nowhere near the projectile before
+      // the precise AABB check — useful at high heat where many NPCs and
+      // projectiles can be live simultaneously.
+      compactAlive(projectilesRef.current, (pr) => pr.life > 0);
+      for (let pri = 0; pri < projectilesRef.current.length; pri++) {
+        const pr = projectilesRef.current[pri];
         pr.x += pr.vx * dtScale;
         pr.life -= dtScale;
-        if (pr.life <= 0) return;
-        npcsRef.current.forEach((n) => {
-          if (n.scanned || n.chatKind || pr.life <= 0) return;
+        if (pr.life <= 0) continue;
+        const npcs = npcsRef.current;
+        for (let ni = 0; ni < npcs.length; ni++) {
+          const n = npcs[ni];
+          if (n.scanned || n.chatKind) continue;
+          // Coarse horizontal reject: NPC widths are < 64, so if the projectile's
+          // center is more than ~80px outside [n.x, n.x+n.width] it cannot hit
+          // this NPC. Saves the inner attribute reads + comparisons on most pairs.
+          if (pr.x < n.x - 80 || pr.x > n.x + n.width + 80) continue;
+          if (pr.y < n.y || pr.y > n.y + n.height) continue;
+          // Precise AABB (all four edges now confirmed within bounds).
           if (pr.x > n.x && pr.x < n.x + n.width && pr.y > n.y && pr.y < n.y + n.height) {
             n.scanHits++;
             pr.life = 0;
@@ -2044,9 +2107,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = React.memo(({
             } else {
               n.alertLevel = Math.min(100, n.alertLevel + 24);
             }
+            break; // projectile is consumed — stop scanning NPCs for it
           }
-        });
-      });
+        }
+      }
       compactAlive(projectilesRef.current, (pr) => pr.life > 0);
 
       itemsRef.current.forEach((it) => {
@@ -2369,7 +2433,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = React.memo(({
       });
 
       const pl = playerRef.current;
-      const playerInCar = carsRef.current.some((car) => car.occupied);
+      // Read the value update() already computed this frame instead of re-scanning
+      // carsRef. update() runs before draw() in every loop iteration, so this is
+      // always fresh; intro/death branches leave it false which matches the
+      // intended "don't render the player sprite" behavior.
+      const playerInCar = playerInCarRef.current;
       const isDeathAnimating = deathAnimRef.current.active;
       const isIntroWaiting = introDropRef.current.phase === 'waiting';
       if (pl.isDashing) {
@@ -2598,6 +2666,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = React.memo(({
       ctx.restore();
     };
 
+    // Single source of truth for tab visibility: the engine useEffect owns
+    // isTabVisibleRef via resumeLoop (visibilitychange/focus/pageshow). Sync
+    // once on mount so the initial state is correct before any event fires —
+    // resumeLoop continues to maintain it for the rest of the engine's life.
+    isTabVisibleRef.current = !document.hidden;
     if (gameState === 'PLAYING') scheduleLoop();
     else draw();
     document.addEventListener('visibilitychange', resumeLoop);
