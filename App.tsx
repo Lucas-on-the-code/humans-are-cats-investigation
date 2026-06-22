@@ -1896,7 +1896,7 @@ const App: React.FC = () => {
           <GameCanvas 
           gameState={gameState} setGameState={setGameState} 
           setDialogContent={setDialogLines} setDialogImage={setDialogImage}
-          onGameOver={(summary) => { setTimeout(() => gameAudio.stopMusic(), 0); setIsRunMusicReady(false); if (activeNpcChat) finalizeMikuChatMemory(activeNpcChat); setActiveNpcChat(null); recordRun(summary); setGameState('MENU'); try { const dismissed = localStorage.getItem('hac_survey_dismissed'); const scope = mikuMemoryScopeForAccount(authUser?.id); const mem = loadMikuMemory(scope); if (!dismissed && mem.sessionCount >= 1) { setShowSurvey(true); } } catch { /* localStorage 不可用（隐私模式）→ 不弹 */ } setIsGameOver(true); setIntroComplete(true); }}
+          onGameOver={(summary) => { setTimeout(() => gameAudio.stopMusic(), 0); setIsRunMusicReady(false); if (activeNpcChat) finalizeMikuChatMemory(activeNpcChat); setActiveNpcChat(null); recordRun(summary); setGameState('MENU'); setShowSurvey(false); try { const dismissed = localStorage.getItem('hac_survey_dismissed'); const scope = mikuMemoryScopeForAccount(authUser?.id); const mem = loadMikuMemory(scope); if (!dismissed && mem.sessionCount >= 1) { setTimeout(() => setShowSurvey(true), 1000); } } catch { /* localStorage 不可用（隐私模式）→ 不弹 */ } setIsGameOver(true); setIntroComplete(true); }}
           onWin={() => { setGameState('ENDING'); setDialogLines((locale === 'zh' ? LYRICS : LYRICS_EN).ending); setDialogImage(IDLE_SPRITE_URLS[0]); }}
           onRunIntroStart={() => {
             void gameAudio.unlock();

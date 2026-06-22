@@ -218,4 +218,4 @@ canvas, .touch-control-button {
 .survey-backdrop-in { animation: survey-backdrop-in 0.3s ease-out both; }
 .survey-pop-in { animation: survey-pop-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) both; }
 .survey-fade-up { animation: survey-fade-up 0.45s ease-out both; }
-.survey-delayed { animation-delay: 0.5s; }
+.survey-delayed { animation-delay: 1s; }
