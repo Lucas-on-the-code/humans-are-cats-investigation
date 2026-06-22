@@ -245,7 +245,11 @@ class GameAudioSystem {
 
   private createAudioElement(src: string) {
     const audio = new Audio(src);
-    audio.preload = 'auto';
+    // 懒加载:首次只建元素,不预拉流。
+    // - bgm 在 MENU 待机时 setMusic 即触发 createAudioElement,'auto' 会让浏览器首屏就拖 1.5MB。
+    // - 真正要播时 syncMusic() 会显式 .load() (NETWORK_EMPTY 分支) 或 .play() 触发网络拉流。
+    // - iOS 解锁走 fetch()+decodeAudioData() 路径,与 preload 无关。
+    audio.preload = 'none';
     audio.setAttribute('playsinline', 'true');
     return audio;
   }

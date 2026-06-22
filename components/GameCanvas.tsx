@@ -277,6 +277,30 @@ interface MapModule {
   build: (index: number, startX: number, heat: number, groundNpcY: number) => void;
 }
 
+// Detect high-end non-touch desktop: these rigs have so many backing pixels
+// (PC 1280x720 viewport already = 921K px vs mobile ~250K) that the Canvas 2D
+// rasterizer is the bottleneck capping PC at ~42fps. Capping their backing
+// store tighter (1440x900) brings the pixel budget in line with mobile while
+// CSS w-full h-full upscales visually; the parallax art is bitmap-style so the
+// quality loss is negligible. Touch / iOS / low+mid tiers are untouched (they
+// either don't hit the cap or already run at small internal sizes).
+const isHighEndDesktop = () => {
+  if (typeof navigator === 'undefined') return false;
+  // Touch device (mobile / tablet) → never downscale, they already run small.
+  if (navigator.maxTouchPoints > 0) return false;
+  // iOS Safari renders Canvas 2D in software — keep its existing cap.
+  const ua = navigator.userAgent || '';
+  if (/iPhone|iPad|iPod/i.test(ua)) return false;
+  if (navigator.platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1) return false;
+  const cores = navigator.hardwareConcurrency || 8;
+  const memory = 'deviceMemory' in navigator
+    ? Number((navigator as Navigator & { deviceMemory?: number }).deviceMemory) || 8
+    : 8;
+  const shortEdge = Math.min(window.innerWidth, window.innerHeight);
+  // High-end tier (must exceed the mid-end thresholds from the perf useEffect).
+  return cores > 8 && memory > 8 && shortEdge > 1080;
+};
+
 const getViewportDims = () => {
   if (typeof window === 'undefined') return { width: 1280, height: 720 };
   const vv = window.visualViewport;
@@ -285,8 +309,12 @@ const getViewportDims = () => {
   // Cap internal resolution so 4K / large displays don't allocate an 8M+ px
   // backing store per frame — the main Chrome stutter cause on strong hardware.
   // CSS w-full h-full upscales visually; pixel-art style loses negligible quality.
-  const MAX_INTERNAL_WIDTH = 1920;
-  const MAX_INTERNAL_HEIGHT = 1200;
+  // High-end desktops get a tighter cap (1440x900): PC was measured at ~42fps
+  // with 1920x1200 / full-CSS-pixel backing; cutting backing pixels ~44% brings
+  // the rasterizer budget in line with mobile (which holds 60fps).
+  const desktop = isHighEndDesktop();
+  const MAX_INTERNAL_WIDTH = desktop ? 1440 : 1920;
+  const MAX_INTERNAL_HEIGHT = desktop ? 900 : 1200;
   const w = Number.isFinite(rawWidth) && rawWidth > 0 ? Math.max(MIN_VIEWPORT_WIDTH, rawWidth) : 1280;
   const h = Number.isFinite(rawHeight) && rawHeight > 0 ? Math.max(MIN_VIEWPORT_HEIGHT, rawHeight) : 720;
   return {
@@ -349,7 +377,7 @@ const emptyStats = (): RunStats => ({
   lastComboAt: 0,
 });
 
-export const GameCanvas: React.FC<GameCanvasProps> = ({
+export const GameCanvas: React.FC<GameCanvasProps> = React.memo(({
   gameState,
   onGameOver,
   onRunIntroStart,
@@ -362,7 +390,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   sfxVolume,
   touchInputRef,
   leaderboardScores,
-}) => {
+}: GameCanvasProps) => {
   const { t, locale } = useI18n();
   const zh = locale === 'zh';
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -433,6 +461,23 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const disableShadowsRef = useRef<boolean>(false); // iOS Safari software Canvas — shadowBlur is brutal
   const viewportRef = useRef(getViewportDims());
   const resizeRafRef = useRef<number | null>(null);
+
+  // Refs for props that change frequently while the player moves (NPC chat
+  // target / dismissed set / chat anchors) but must NOT tear down the engine
+  // useEffect — otherwise the RAF loop unmounts, the accumulator loses steps,
+  // the gradient cache rebuilds, and talking-while-running stutters. The engine
+  // reads these via .current; only the lightweight sync effects below update
+  // them. The engine useEffect deps no longer list these props.
+  const activeNpcChatTargetRef = useRef(activeNpcChatTarget);
+  const activeConversationTargetRef = useRef(activeConversationTarget);
+  const dismissedMikuIdsRef = useRef(dismissedMikuIds);
+  const onNpcChatStartRef = useRef(onNpcChatStart);
+  const onNpcChatAnchorChangeRef = useRef(onNpcChatAnchorChange);
+  useEffect(() => { activeNpcChatTargetRef.current = activeNpcChatTarget; }, [activeNpcChatTarget]);
+  useEffect(() => { activeConversationTargetRef.current = activeConversationTarget; }, [activeConversationTarget]);
+  useEffect(() => { dismissedMikuIdsRef.current = dismissedMikuIds; }, [dismissedMikuIds]);
+  useEffect(() => { onNpcChatStartRef.current = onNpcChatStart; }, [onNpcChatStart]);
+  useEffect(() => { onNpcChatAnchorChangeRef.current = onNpcChatAnchorChange; }, [onNpcChatAnchorChange]);
 
   // Portrait guard — the landscape side-scroller is unplayable squeezed upright.
   const [isPortrait, setIsPortrait] = useState<boolean>(
@@ -786,7 +831,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const openNpcChat = (npc: NPC) => {
     const isMiku = npc.chatKind === 'miku';
     const kind = isMiku ? 'miku' : 'random';
-    onNpcChatStart({
+    onNpcChatStartRef.current({
       kind,
       speaker: isMiku ? t('npc.miku') : npc.label || t('npc.pedestrian'),
       lines: [isMiku ? pickRandomLine(zh ? MIKU_CHAT_OPENING_LINES : MIKU_CHAT_OPENING_LINES_EN) : pickRandomLine(zh ? RANDOM_NPC_CHAT_LINES : RANDOM_NPC_CHAT_LINES_EN)],
@@ -798,7 +843,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   };
 
   const openPedestrianChat = (pedestrian: DecorativePedestrian) => {
-    onNpcChatStart({
+    onNpcChatStartRef.current({
       kind: 'random',
       speaker: t('npc.pedestrian'),
       lines: [pickRandomLine(zh ? RANDOM_NPC_CHAT_LINES : RANDOM_NPC_CHAT_LINES_EN)],
@@ -808,15 +853,16 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   };
 
   const syncNpcChatAnchor = () => {
-    if (!activeNpcChatTarget) return;
-    const target = activeNpcChatTarget.type === 'npc'
-      ? npcsRef.current.find((npc) => npc.id === activeNpcChatTarget.id)
-      : pedestriansRef.current.find((pedestrian) => pedestrian.id === activeNpcChatTarget.id);
+    const active = activeNpcChatTargetRef.current;
+    if (!active) return;
+    const target = active.type === 'npc'
+      ? npcsRef.current.find((npc) => npc.id === active.id)
+      : pedestriansRef.current.find((pedestrian) => pedestrian.id === active.id);
     if (!target) {
-      onNpcChatAnchorChange({ x: -10000, y: -10000 });
+      onNpcChatAnchorChangeRef.current({ x: -10000, y: -10000 });
       return;
     }
-    onNpcChatAnchorChange(getNpcChatAnchor(target, activeNpcChatTarget.kind));
+    onNpcChatAnchorChangeRef.current(getNpcChatAnchor(target, active.kind));
   };
 
   const awardScore = (base: number, label: string, x: number, y: number, combo = true) => {
@@ -1842,9 +1888,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         if (!nearbyMikuIds.has(id)) mikuProximityRef.current.delete(id);
       });
 
-      if (!activeRide && !boardingCar && !activeNpcChatTarget) {
+      if (!activeRide && !boardingCar && !activeNpcChatTargetRef.current) {
         const autoTalkMiku = npcsRef.current
-          .filter((npc) => !npc.scanned && npc.chatKind === 'miku' && !dismissedMikuIds?.has(npc.id) && nearbyMikuIds.has(npc.id) && !mikuProximityRef.current.has(npc.id))
+          .filter((npc) => !npc.scanned && npc.chatKind === 'miku' && !dismissedMikuIdsRef.current?.has(npc.id) && nearbyMikuIds.has(npc.id) && !mikuProximityRef.current.has(npc.id))
           .sort((a, b) => Math.abs(a.x + a.width / 2 - (p.x + p.width / 2)) - Math.abs(b.x + b.width / 2 - (p.x + p.width / 2)))[0];
         if (autoTalkMiku) {
           mikuProximityRef.current.add(autoTalkMiku.id);
@@ -1940,7 +1986,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       npcsRef.current.forEach((n) => {
         if (n.damageCooldown > 0) n.damageCooldown = Math.max(0, n.damageCooldown - 16 * dtScale);
         if (!n.scanned) {
-          const isPausedForMikuChat = activeConversationTarget?.type === 'npc' && activeConversationTarget.kind === 'miku' && activeConversationTarget.id === n.id;
+          const isPausedForMikuChat = activeConversationTargetRef.current?.type === 'npc' && activeConversationTargetRef.current.kind === 'miku' && activeConversationTargetRef.current.id === n.id;
           if (!isPausedForMikuChat) {
             n.x += n.vx * dtScale;
             if (n.x < n.patrolStart) { n.x = n.patrolStart; n.vx = Math.abs(n.vx); }
@@ -2077,7 +2123,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         return;
       }
       if (n.spriteKey) {
-        const isPausedForMikuChat = activeConversationTarget?.type === 'npc' && activeConversationTarget.kind === 'miku' && activeConversationTarget.id === n.id;
+        const isPausedForMikuChat = activeConversationTargetRef.current?.type === 'npc' && activeConversationTargetRef.current.kind === 'miku' && activeConversationTargetRef.current.id === n.id;
         const spriteKey = isPausedForMikuChat
           ? n.spriteKey
           : n.spriteKey.startsWith('decor_npc_v2_')
@@ -2567,7 +2613,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       if (animationId !== null) cancelAnimationFrame(animationId);
       animationId = null;
     };
-  }, [isLoaded, gameState, dims, masterVolume, sfxVolume, onNpcChatStart, activeNpcChatTarget, activeConversationTarget, dismissedMikuIds, onNpcChatAnchorChange]);
+  // Engine loop deps are intentionally narrow: only values the loop's SETUP
+  // phase depends on. Props that change while the player moves (chat target /
+  // dismissed set / chat anchors) are read via refs (see activeNpcChatTargetRef
+  // etc.) so they no longer tear down the RAF loop mid-run. onNpcChatStart /
+  // onNpcChatAnchorChange are useCallback-stable in App.tsx but also ref'd for
+  // defense in depth — if a parent ever drops the useCallback, the engine loop
+  // still survives.
+  }, [isLoaded, gameState, dims, masterVolume, sfxVolume]);
 
   if (!isLoaded) return (
     <div className="flex flex-col items-center justify-center h-screen w-screen bg-[#050510] gap-6">
@@ -2589,4 +2642,4 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   );
 
   return <canvas ref={canvasRef} width={dims.width} height={dims.height} onPointerDown={handleCanvasPointerDown} className="block w-full h-full bg-[#050510]" />;
-};
+});

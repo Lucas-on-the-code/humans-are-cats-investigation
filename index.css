@@ -63,8 +63,8 @@ canvas, .touch-control-button {
   background:
     linear-gradient(180deg, rgba(3, 7, 18, 0.22), rgba(3, 7, 18, 0.9) 68%, #030712 100%),
     linear-gradient(90deg, rgba(3, 7, 18, 0.72), rgba(3, 7, 18, 0.16) 48%, rgba(3, 7, 18, 0.62)),
-    url('/scene/tree.png'),
-    url('/scene/house.png'),
+    url('/scene/tree.webp'),
+    url('/scene/house.webp'),
     url('/scene/sky.png');
   background-position: center bottom, center, center bottom, center bottom, center;
   background-size: cover, cover, auto 100%, auto 100%, cover;
