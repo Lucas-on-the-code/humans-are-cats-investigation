@@ -25,6 +25,7 @@ export const zh: Record<string, string> = {
   'gameover.playAgain': '再跑一局',
   // survey
   'survey.lead': '谢谢你陪我聊这么久！真的很开心～',
+  'survey.mikuName': '初音未来',
   'survey.leadSub': '我有几个小问题想问下你：',
   'survey.q1.label': '你熟悉AI角色扮演吗？',
   'survey.q1.opt1': '玩过AI角色扮演的电子游戏',

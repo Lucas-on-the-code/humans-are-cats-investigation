@@ -78,8 +78,8 @@ export const SurveyPopup = ({ userId, guestId, onComplete, onDismiss }: Props) =
   const isEmailStep = step === 'emailWilling' || step === 'emailPass';
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4">
-      <div className="game-panel rounded-lg p-6 w-[min(92vw,32rem)] max-h-[90vh] overflow-y-auto text-left animate-in fade-in zoom-in duration-500">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4 survey-backdrop-in">
+      <div className="game-panel rounded-lg p-6 w-[min(92vw,32rem)] max-h-[90vh] overflow-y-auto text-left survey-pop-in">
         <div className="flex items-center justify-between mb-3">
           {!isEmailStep && (
             <div className="flex gap-1" aria-label={t('survey.aria.progress', { n: Math.max(1, progressIndex + 1), total: progressTotal })}>
@@ -93,24 +93,32 @@ export const SurveyPopup = ({ userId, guestId, onComplete, onDismiss }: Props) =
         </div>
 
         {step === 'q1' && (
-          <div className="space-y-3">
-            <p className="text-cyan-100 text-sm whitespace-pre-line">{t('survey.lead') + '\n' + t('survey.leadSub')}</p>
-            <p className="text-white font-bold text-sm">{t('survey.q1.label')}</p>
-            {[1, 2, 3, 4].map((i) => (
-              <button key={i} onClick={() => setQ1(t(`survey.q1.opt${i}`))}
-                className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors ${q1 === t(`survey.q1.opt${i}`) ? 'bg-cyan-500/30 text-cyan-50 ring-1 ring-cyan-400' : 'bg-slate-800/60 text-slate-200 hover:bg-slate-700/60'}`}>
-                {t(`survey.q1.opt${i}`)}
-              </button>
-            ))}
-            <div className="flex justify-end gap-2 pt-1">
-              <button disabled={!q1 || submitting} onClick={() => setStep('q2')}
-                className="px-4 py-2 game-button text-white text-sm rounded-md disabled:opacity-40">{t('survey.next')}</button>
+          <div>
+            <div className="flex items-center gap-3 mb-3">
+              <img src="/sprites/npc_v2/npc_v2_0.png" alt="Miku" className="w-12 h-12 rounded-full object-cover object-top ring-2 ring-cyan-400/70 bg-cyan-950/40 shrink-0" />
+              <div className="text-cyan-300 font-bold text-sm pixel-font">{t('survey.mikuName')}</div>
+            </div>
+            <p className="text-cyan-50 text-sm leading-relaxed">{t('survey.lead')}</p>
+
+            <div className="survey-fade-up survey-delayed">
+              <p className="text-slate-400 text-xs mt-5 mb-2">{t('survey.leadSub')}</p>
+              <p className="text-white font-bold text-sm mb-3">{t('survey.q1.label')}</p>
+              {[1, 2, 3, 4].map((i) => (
+                <button key={i} onClick={() => setQ1(t(`survey.q1.opt${i}`))}
+                  className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors mb-2 ${q1 === t(`survey.q1.opt${i}`) ? 'bg-cyan-500/30 text-cyan-50 ring-1 ring-cyan-400' : 'bg-slate-800/60 text-slate-200 hover:bg-slate-700/60'}`}>
+                  {t(`survey.q1.opt${i}`)}
+                </button>
+              ))}
+              <div className="flex justify-end pt-2">
+                <button disabled={!q1 || submitting} onClick={() => setStep('q2')}
+                  className="px-4 py-2 game-button text-white text-sm rounded-md disabled:opacity-40">{t('survey.next')}</button>
+              </div>
             </div>
           </div>
         )}
 
         {step === 'q2' && (
-          <div className="space-y-2">
+          <div className="space-y-2 survey-fade-up">
             <p className="text-white font-bold text-sm">{t('survey.q2.label')}</p>
             {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
               <label key={i} className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm cursor-pointer ${q2.includes(t(`survey.q2.opt${i}`)) ? 'bg-cyan-500/20 ring-1 ring-cyan-400/60' : 'bg-slate-800/60 hover:bg-slate-700/60'}`}>
@@ -134,7 +142,7 @@ export const SurveyPopup = ({ userId, guestId, onComplete, onDismiss }: Props) =
         )}
 
         {step === 'q3' && (
-          <div className="space-y-3">
+          <div className="space-y-3 survey-fade-up">
             <p className="text-cyan-50 text-sm whitespace-pre-line leading-relaxed">{t('survey.q3.body')}</p>
             <button disabled={submitting} onClick={() => { setQ3('yes'); setStep('emailWilling'); }} className="w-full text-left px-3 py-2 rounded-md text-sm transition-colors bg-slate-800/60 text-slate-100 hover:bg-slate-700/60">{t('survey.q3.yes')}</button>
             <button disabled={submitting} onClick={() => { setQ3('maybe'); setStep('emailWilling'); }} className="w-full text-left px-3 py-2 rounded-md text-sm transition-colors bg-slate-800/60 text-slate-100 hover:bg-slate-700/60">{t('survey.q3.maybe')}</button>
@@ -146,7 +154,7 @@ export const SurveyPopup = ({ userId, guestId, onComplete, onDismiss }: Props) =
         )}
 
         {step === 'q4' && (
-          <div className="space-y-2">
+          <div className="space-y-2 survey-fade-up">
             <p className="text-white font-bold text-sm">{t('survey.q4.label')}</p>
             {[1, 2, 3, 4, 5, 6, 7].map((i) => (
               <label key={i} className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm cursor-pointer ${q4.includes(t(`survey.q4.opt${i}`)) ? 'bg-cyan-500/20 ring-1 ring-cyan-400/60' : 'bg-slate-800/60 hover:bg-slate-700/60'}`}>
@@ -170,7 +178,7 @@ export const SurveyPopup = ({ userId, guestId, onComplete, onDismiss }: Props) =
         )}
 
         {isEmailStep && (
-          <div className="space-y-3">
+          <div className="space-y-3 survey-fade-up">
             <p className="text-cyan-50 text-sm whitespace-pre-line">
               {step === 'emailWilling' ? t('survey.end.willing') : t('survey.end.pass')}
             </p>

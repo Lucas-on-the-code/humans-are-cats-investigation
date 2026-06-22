@@ -25,6 +25,7 @@ export const en: Record<string, string> = {
   'gameover.playAgain': 'Run Again',
   // survey
   'survey.lead': 'Thanks for chatting with me this long! I\'m really happy~',
+  'survey.mikuName': 'Hatsune Miku',
   'survey.leadSub': 'I have a few little questions for you:',
   'survey.q1.label': 'How familiar are you with AI roleplay?',
   'survey.q1.opt1': 'I\'ve played AI roleplay games',
