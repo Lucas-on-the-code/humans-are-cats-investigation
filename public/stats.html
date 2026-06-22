@@ -51,9 +51,12 @@ function bars(id, dist) {
       <div class="count">${d.c}</div></div>`;
   }).join('');
 }
+const STATS_KEY = new URLSearchParams(location.search).get('key') || '';
 async function load() {
   try {
-    const r = await fetch('/api/survey/stats', { cache: 'no-store' });
+    if (!STATS_KEY) throw new Error('缺少 ?key= 参数，请用带 key 的完整链接访问');
+    const r = await fetch('/api/survey/stats?key=' + encodeURIComponent(STATS_KEY), { cache: 'no-store' });
+    if (r.status === 401) throw new Error('key 无效，无权查看');
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const d = await r.json();
     document.getElementById('sub').textContent =

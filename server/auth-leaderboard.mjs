@@ -681,6 +681,10 @@ export const recordMikuSession = (scopeKey, sessionCount) => {
 
 export const handleSurveyStatsRequest = async (req, res) => {
   if (req.method !== 'GET') return writeJson(res, 405, { error: 'METHOD_NOT_ALLOWED' });
+  const statsSecret = process.env.GAME_STATS_SECRET;
+  const url = new URL(req.url || '/', 'http://local');
+  const key = url.searchParams.get('key') || '';
+  if (!statsSecret || key !== statsSecret) return writeJson(res, 401, { error: 'UNAUTHORIZED' });
   try {
     const countOf = (sql) => db.prepare(sql).get().c;
     const dist = (sql) => db.prepare(sql).all().map((r) => ({ k: r.k, c: r.c }));
