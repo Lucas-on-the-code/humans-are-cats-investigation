@@ -1753,7 +1753,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         p.isGrounded = false;
         playSound('JUMP');
       }
-      if (slidePressed && p.isGrounded) p.slideTime = 520;
 
       p.x += p.vx * dtScale;
       const leftWallX = leftAirWallXRef.current;
