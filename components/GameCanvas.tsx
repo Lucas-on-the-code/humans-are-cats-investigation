@@ -53,6 +53,7 @@ interface GameCanvasProps {
   masterVolume: number;
   sfxVolume: number;
   touchInputRef: React.MutableRefObject<TouchInput>;
+  bloomStrength: number;
 }
 
 const BASE_HEIGHT = 600;
@@ -334,6 +335,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   masterVolume,
   sfxVolume,
   touchInputRef,
+  bloomStrength,
 }) => {
   const { t: activeTranslation } = useTranslation();
   const translationRef = useRef(activeTranslation);
@@ -434,7 +436,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const isMidEnd = !isLowEnd && (cores <= 8 || memory <= 8 || shortEdge <= 1080);
 
     if (isLowEnd) {
-      targetFpsRef.current = 45;
+      targetFpsRef.current = 40;
       particleLimitRef.current = 150;
       projectileLimitRef.current = 42;
       sceneQualityScaleRef.current = 0.5;
@@ -1477,8 +1479,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         scheduleLoop();
         return;
       }
-      // Cap delta so a single physics step cannot tunnel through thin obstacles.
-      // 33ms is roughly dtScale 2; full sub-stepping can remain a follow-up.
       const clampedDelta = Math.min(deltaMs, 33);
       const dtScale = clampedDelta / BASE_FRAME_MS;
       lastFrameTime = now;
@@ -1875,7 +1875,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       });
 
       projectilesRef.current.forEach((pr) => {
-        if (pr.life <= 0) return; // Do not move or re-check an already-dead projectile.
+        if (pr.life <= 0) return;
         pr.x += pr.vx * dtScale;
         pr.life -= dtScale;
         if (pr.life <= 0) return;
@@ -1952,10 +1952,68 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       cameraRef.current.x += (targetCamX - cameraRef.current.x) * (0.16 * dtScale);
     };
 
+    const drawDropShadow = (
+      x: number,
+      y: number,
+      width: number,
+      height: number,
+      groundY: number = VIRTUAL_GROUND_Y,
+      alphaScale: number = 1,
+      enableBloom: boolean = false,
+      scaleOverride?: number,
+    ) => {
+      const centerX = x + width / 2;
+      const bottomY = y + height;
+      const heightAboveGround = groundY - bottomY;
+      const baseScale = 1 + Math.max(0, heightAboveGround) / 90;
+      const shadowScale = scaleOverride ?? baseScale;
+
+      const baseAlpha =
+        Math.min(0.45 * alphaScale, 0.45) *
+        (1 - Math.min(1, heightAboveGround / 180));
+
+      const shadowAlpha = enableBloom
+        ? Math.min(0.35, baseAlpha * bloomStrength)
+        : baseAlpha;
+
+      const shadowWidth = width * shadowScale * 0.9 * (enableBloom ? bloomStrength : 1);
+      const shadowHeight = Math.max(4, width * 0.3 * shadowScale * (enableBloom ? bloomStrength : 1));
+
+      ctx.save();
+      if (enableBloom && shadowAlpha > 0.08) {
+        const layers = 3;
+        for (let i = layers; i >= 1; i--) {
+          const t = i / layers;
+          ctx.globalAlpha = shadowAlpha * (1 - t) * 0.7;
+          ctx.fillStyle = '#000';
+          ctx.beginPath();
+          const w = shadowWidth * (1 + t * 0.3);
+          const h = shadowHeight * (1 + t * 0.3);
+          ctx.ellipse(centerX, groundY, w / 2, h / 2, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.globalAlpha = shadowAlpha * 0.85;
+        ctx.fillStyle = '#000';
+        ctx.beginPath();
+        ctx.ellipse(centerX, groundY, shadowWidth / 2, shadowHeight / 2, 0, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        ctx.globalAlpha = Math.max(0.08, shadowAlpha);
+        ctx.fillStyle = '#000';
+        ctx.beginPath();
+        ctx.ellipse(centerX, groundY, shadowWidth / 2, shadowHeight / 2, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    };
+
     const drawPlaceholderNpc = (n: NPC, now: number) => {
       const centerX = n.x + n.width / 2;
       const bodyColor = n.scanned ? '#66f2c2' : n.type === NpcType.LEADER ? '#ff9f1c' : n.isTarget ? '#ffd166' : '#94a3b8';
       const accentColor = n.scanned ? '#103c35' : n.isTarget ? '#111827' : '#0f172a';
+      if (sceneQualityScaleRef.current >= 0.5) {
+        drawDropShadow(n.x, n.y, n.width, n.height);
+      }
       ctx.save();
       ctx.translate(centerX, n.y);
       if (n.scanned) {
@@ -1985,10 +2043,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           : n.spriteKey.startsWith('decor_npc_')
             ? `decor_npc_${Math.floor(now / 130) % 4}`
             : n.spriteKey;
-        ctx.fillStyle = 'rgba(0,0,0,0.3)';
-        ctx.beginPath();
-        ctx.ellipse(0, n.height + 5, n.width * 0.52, 8, 0, 0, Math.PI * 2);
-        ctx.fill();
         ctx.save();
         if (n.vx > 0) ctx.scale(-1, 1);
         drawImageSafe(spriteKey, -n.width / 2, 0, n.width, n.height);
@@ -2057,6 +2111,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
       pedestriansRef.current.forEach((ped) => {
         if (ped.x + ped.width < viewLeft || ped.x > viewRight) return;
+        if (sceneQualityScaleRef.current >= 0.5) {
+          if (ped.x > viewLeft - 60 && ped.x < viewRight + 60) {
+            drawDropShadow(ped.x, ped.y, ped.width, ped.height);
+          }
+        }
         const frameCount = ped.spriteSet === 'npc' ? 4 : 8;
         const frame = Math.floor((now + ped.frameOffset) / 130) % frameCount;
         const spriteKey = ped.spriteSet === 'npc' ? `decor_npc_${frame}` : `decor_npc_v2_${frame}`;
@@ -2091,10 +2150,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         if (hazard.x + hazard.width < viewLeft || hazard.x > viewRight) return;
         const active = isHazardActive(hazard, now);
         ctx.save();
+        if (active && sceneQualityScaleRef.current >= 0.6) {
+          ctx.shadowColor = '#ff214f';
+          ctx.shadowBlur = 22 * bloomStrength;
+        }
         ctx.globalAlpha = active ? 0.95 : 0.22;
         ctx.fillStyle = active ? '#ff214f' : '#7b2538';
-        ctx.shadowColor = active ? '#ff214f' : 'transparent';
-        ctx.shadowBlur = active ? 18 : 0;
         ctx.fillRect(hazard.x, hazard.y, hazard.width, hazard.height);
         ctx.shadowBlur = 0;
         ctx.fillStyle = active ? '#ffd1dc' : '#915265';
@@ -2107,6 +2168,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
       obstaclesRef.current.forEach((obstacle) => {
         if (obstacle.x + obstacle.width < viewLeft || obstacle.x > viewRight) return;
+        if (sceneQualityScaleRef.current >= 0.5) {
+          if (obstacle.x > viewLeft - 60 && obstacle.x < viewRight + 60) {
+            const shadowScale = obstacle.type === 'LOW_BAR' ? 0.9 : 1;
+            drawDropShadow(obstacle.x, obstacle.y, obstacle.width, obstacle.height, VIRTUAL_GROUND_Y, 1, false, shadowScale);
+          }
+        }
         if (obstacle.type === 'BARRIER') {
           ctx.fillStyle = '#f97316';
           ctx.strokeStyle = '#fed7aa';
@@ -2121,7 +2188,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         } else {
           const pulse = 0.5 + Math.sin(now / 150 + obstacle.x * 0.01) * 0.5;
           ctx.shadowColor = '#f0abfc';
-          ctx.shadowBlur = 5 + pulse * 8;
+          ctx.shadowBlur = (5 + pulse * 8) * bloomStrength;
           ctx.fillStyle = '#7c3aed';
           ctx.strokeStyle = '#fde047';
           ctx.lineWidth = 3;
@@ -2199,14 +2266,26 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
       itemsRef.current.forEach((it) => {
         if (it.x + it.width < viewLeft || it.x > viewRight) return;
+        const glowColor = it.type === 'HEALTH' ? '#00cc88' : it.type === 'MAGNET' ? '#9ee6ff' : it.type === 'SHIELD' ? '#66f2c2' : it.type === 'EVIDENCE' ? COLORS.evidence : '#ffe066';
+        if (sceneQualityScaleRef.current >= 0.5) {
+          ctx.save();
+          ctx.shadowColor = glowColor;
+          ctx.shadowBlur = 14 * bloomStrength;
+          ctx.fillStyle = glowColor;
+          ctx.beginPath();
+          ctx.arc(it.x + 15, it.y + 15 + it.floatOffset, 15, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        } else {
+          ctx.fillStyle = glowColor;
+          ctx.beginPath();
+          ctx.arc(it.x + 15, it.y + 15 + it.floatOffset, 15, 0, Math.PI * 2);
+          ctx.fill();
+        }
         ctx.textAlign = 'left';
         const label = it.type === 'HEALTH' ? '+' : it.type === 'MAGNET' ? 'M' : it.type === 'SHIELD' ? 'S' : it.type === 'EVIDENCE' ? 'D' : '•';
-        ctx.fillStyle = it.type === 'HEALTH' ? '#00cc88' : it.type === 'MAGNET' ? '#9ee6ff' : it.type === 'SHIELD' ? '#66f2c2' : it.type === 'EVIDENCE' ? COLORS.evidence : '#ffe066';
-        ctx.font = 'bold 24px "Space Mono", monospace';
-        ctx.beginPath();
-        ctx.arc(it.x + 15, it.y + 15 + it.floatOffset, 15, 0, Math.PI * 2);
-        ctx.fill();
         ctx.fillStyle = '#07111f';
+        ctx.font = 'bold 24px "Space Mono", monospace';
         ctx.textAlign = 'center';
         ctx.fillText(label, it.x + 15, it.y + 23 + it.floatOffset);
       });
@@ -2223,6 +2302,22 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       const playerInCar = carsRef.current.some((car) => car.occupied);
       const isDeathAnimating = deathAnimRef.current.active;
       const isIntroWaiting = introDropRef.current.phase === 'waiting';
+
+      if (!playerInCar && !isIntroWaiting && sceneQualityScaleRef.current >= 0.5) {
+        const playerBottomY = pl.y + (pl.isSliding ? 44 : pl.height);
+        if (pl.x > viewLeft - 60 && pl.x < viewRight + 60) {
+          drawDropShadow(
+            pl.x,
+            pl.y,
+            pl.width,
+            pl.isSliding ? 44 : pl.height,
+            VIRTUAL_GROUND_Y,
+            1,
+            true
+          );
+        }
+      }
+
       if (pl.isDashing) {
         dashTrailRef.current.push({ x: pl.x, y: pl.y });
         if (dashTrailRef.current.length > 5) dashTrailRef.current.shift();
@@ -2272,45 +2367,64 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ctx.restore();
       }
 
-      carsRef.current.forEach((car) => {
-        if (car.x + car.width < viewLeft || car.x > viewRight) return;
-        const canEnter = car.canRide && !car.occupied && !car.used && rectsOverlap(getPlayerHitbox(), getTaxiBoardingZone(car));
-        ctx.save();
-        ctx.fillStyle = 'rgba(0,0,0,0.28)';
+    carsRef.current.forEach((car) => {
+      if (car.x + car.width < viewLeft || car.x > viewRight) return;
+      if (sceneQualityScaleRef.current >= 0.5) {
+        if (car.x > viewLeft - 60 && car.x < viewRight + 60) {
+          drawDropShadow(car.x, car.y, car.width, car.height, car.y + car.height);
+        }
+      }
+      const canEnter = car.canRide && !car.occupied && !car.used && rectsOverlap(getPlayerHitbox(), getTaxiBoardingZone(car));
+      ctx.save();
+      drawImageSafe(`car_${car.spriteKey}`, car.x, car.y, car.width, car.height);
+      if (car.occupied) {
+        ctx.fillStyle = '#66f2c2';
         ctx.beginPath();
-        ctx.ellipse(car.x + car.width / 2, car.y + car.height + 5, car.width * 0.46, 8, 0, 0, Math.PI * 2);
+        ctx.arc(car.x + car.width * 0.5, car.y + car.height * 0.38, 5, 0, Math.PI * 2);
         ctx.fill();
-        drawImageSafe(`car_${car.spriteKey}`, car.x, car.y, car.width, car.height);
-        if (car.occupied) {
-          ctx.fillStyle = '#66f2c2';
-          ctx.beginPath();
-          ctx.arc(car.x + car.width * 0.5, car.y + car.height * 0.38, 5, 0, Math.PI * 2);
-          ctx.fill();
-        }
-        if (canEnter) {
-          ctx.textAlign = 'center';
-          ctx.font = 'bold 13px "Space Mono", monospace';
-          ctx.fillStyle = '#66f2c2';
-          ctx.fillText(t('prompt_taxi_board'), car.x + car.width / 2, car.y - 12 + Math.sin(now / 180) * 4);
-        }
-        ctx.restore();
-      });
+      }
+      if (canEnter) {
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 13px "Space Mono", monospace';
+        ctx.fillStyle = '#66f2c2';
+        ctx.fillText(t('prompt_taxi_board'), car.x + car.width / 2, car.y - 12 + Math.sin(now / 180) * 4);
+      }
+      ctx.restore();
+    });
 
       particlesRef.current.forEach((pa) => {
         if (pa.x + pa.size < viewLeft || pa.x - pa.size > viewRight) return;
         ctx.globalAlpha = Math.max(0, pa.life / 52);
         ctx.fillStyle = pa.color;
-        ctx.beginPath();
-        if (pa.shape === 'leaf') {
+        if (sceneQualityScaleRef.current >= 0.6) {
           ctx.save();
-          ctx.translate(pa.x, pa.y);
-          ctx.rotate((pa.life + pa.x) * 0.08);
-          ctx.ellipse(0, 0, pa.size * 1.45, pa.size * 0.62, 0, 0, Math.PI * 2);
+          ctx.shadowColor = pa.color;
+          ctx.shadowBlur = 6 * bloomStrength;
+          ctx.beginPath();
+          if (pa.shape === 'leaf') {
+            ctx.save();
+            ctx.translate(pa.x, pa.y);
+            ctx.rotate((pa.life + pa.x) * 0.08);
+            ctx.ellipse(0, 0, pa.size * 1.45, pa.size * 0.62, 0, 0, Math.PI * 2);
+            ctx.restore();
+          } else {
+            ctx.arc(pa.x, pa.y, pa.size, 0, Math.PI * 2);
+          }
+          ctx.fill();
           ctx.restore();
         } else {
-          ctx.arc(pa.x, pa.y, pa.size, 0, Math.PI * 2);
+          ctx.beginPath();
+          if (pa.shape === 'leaf') {
+            ctx.save();
+            ctx.translate(pa.x, pa.y);
+            ctx.rotate((pa.life + pa.x) * 0.08);
+            ctx.ellipse(0, 0, pa.size * 1.45, pa.size * 0.62, 0, 0, Math.PI * 2);
+            ctx.restore();
+          } else {
+            ctx.arc(pa.x, pa.y, pa.size, 0, Math.PI * 2);
+          }
+          ctx.fill();
         }
-        ctx.fill();
         ctx.globalAlpha = 1;
       });
 
@@ -2319,8 +2433,17 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ctx.globalAlpha = Math.max(0, Math.min(1, ft.life / 30));
         ctx.font = `bold ${ft.size}px "Space Mono", monospace`;
         ctx.textAlign = 'center';
-        ctx.fillStyle = ft.color;
-        ctx.fillText(ft.text, ft.x, ft.y);
+        if (sceneQualityScaleRef.current >= 0.5) {
+          ctx.save();
+          ctx.shadowColor = ft.color;
+          ctx.shadowBlur = 6 * bloomStrength;
+          ctx.fillStyle = ft.color;
+          ctx.fillText(ft.text, ft.x, ft.y);
+          ctx.restore();
+        } else {
+          ctx.fillStyle = ft.color;
+          ctx.fillText(ft.text, ft.x, ft.y);
+        }
         ctx.globalAlpha = 1;
       });
       ctx.restore();
@@ -2336,6 +2459,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       hudGradient.addColorStop(0, 'rgba(8, 17, 38, 0.82)');
       hudGradient.addColorStop(1, 'rgba(2, 6, 23, 0.72)');
       ctx.save();
+      if (sceneQualityScaleRef.current >= 0.6) {
+        ctx.shadowColor = 'rgba(34, 211, 238, 0.45)';
+        ctx.shadowBlur = 16 * bloomStrength;
+      }
       ctx.beginPath();
       ctx.roundRect(hudX, hudY, hudW, hudH, hudRadius);
       ctx.fillStyle = hudGradient;
@@ -2343,14 +2470,24 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       ctx.strokeStyle = 'rgba(125, 211, 252, 0.34)';
       ctx.lineWidth = 1;
       ctx.stroke();
-      ctx.shadowColor = 'rgba(34, 211, 238, 0.18)';
-      ctx.shadowBlur = 24;
-      ctx.strokeStyle = 'rgba(34, 211, 238, 0.12)';
-      ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.shadowColor = 'transparent';
       ctx.restore();
-      ctx.fillStyle = '#FFD700';
-      ctx.font = 'bold 28px "Space Mono", monospace';
-      ctx.fillText(`${Math.floor(stats.score).toLocaleString()}`, 44, 62);
+
+      if (sceneQualityScaleRef.current >= 0.5) {
+        ctx.save();
+        ctx.shadowColor = '#FFD700';
+        ctx.shadowBlur = 8;
+        ctx.fillStyle = '#FFD700';
+        ctx.font = 'bold 28px "Space Mono", monospace';
+        ctx.fillText(`${Math.floor(stats.score).toLocaleString()}`, 44, 62);
+        ctx.restore();
+      } else {
+        ctx.fillStyle = '#FFD700';
+        ctx.font = 'bold 28px "Space Mono", monospace';
+        ctx.fillText(`${Math.floor(stats.score).toLocaleString()}`, 44, 62);
+      }
+
       ctx.fillStyle = '#dbeafe';
       ctx.font = 'bold 12px "Space Mono", monospace';
       ctx.fillText(`${t('hud_distance')} ${getDistanceMeters(stats.distance)}m`, 44, 86);

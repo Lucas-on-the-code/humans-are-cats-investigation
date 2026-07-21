@@ -16,6 +16,7 @@ const resources = {
       master_volume: '主音量',
       sfx_volume: '音效音量',
       music_volume: '音乐音量',
+      bloom_strength: '柔光强度',
       language_label: '语言',
       confirm_return: '确认并返回',
 
@@ -215,6 +216,7 @@ const resources = {
       master_volume: 'Master Volume',
       sfx_volume: 'SFX Volume',
       music_volume: 'Music Volume',
+      bloom_strength: 'Bloom Strength',
       language_label: 'Language',
       confirm_return: 'Confirm & Return',
 
@@ -401,6 +403,7 @@ const resources = {
       master_volume: 'マスター音量',
       sfx_volume: '効果音',
       music_volume: 'BGM',
+      bloom_strength: 'ブルーム強度',
       language_label: '言語',
       confirm_return: '確認して戻る',
 

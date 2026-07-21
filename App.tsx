@@ -1158,6 +1158,7 @@ const App: React.FC = () => {
   const [uploadBusy, setUploadBusy] = useState(false);
   const [uploadAttemptedRunToken, setUploadAttemptedRunToken] = useState<string | null>(null);
   const [masterVolume, setMasterVolume] = useState<number>(0.5);
+  const [bloomStrength, setBloomStrength] = useState<number>(1.5);
   const [sfxVolume, setSfxVolume] = useState<number>(0.35);
   const [musicVolume, setMusicVolume] = useState<number>(0.3);
   const [isRunMusicReady, setIsRunMusicReady] = useState<boolean>(false);
@@ -1867,6 +1868,13 @@ const App: React.FC = () => {
             </div>
             <div className="mb-8">
               <label className="text-slate-300 text-sm font-bold mb-3 flex justify-between">
+                <span>{t('bloom_strength')}</span>
+                <span className="text-cyan-400">{bloomStrength.toFixed(1)}</span>
+              </label>
+              <input type="range" min="0.5" max="3.0" step="0.1" value={bloomStrength} onChange={(e) => setBloomStrength(parseFloat(e.target.value))} className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-cyan-400" />
+            </div>
+            <div className="mb-8">
+              <label className="text-slate-300 text-sm font-bold mb-3 flex justify-between">
                 <span>{t('language_label')}</span>
               </label>
               <div className="relative w-full" ref={menuRef}>
@@ -1925,6 +1933,7 @@ const App: React.FC = () => {
           dismissedMikuIds={dismissedMikuIds}
           onNpcChatAnchorChange={updateNpcChatAnchor}
           masterVolume={masterVolume} sfxVolume={sfxVolume} touchInputRef={touchInputRef}
+          bloomStrength={bloomStrength}
         />
       </div>
       )}
