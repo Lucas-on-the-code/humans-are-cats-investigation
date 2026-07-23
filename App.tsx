@@ -2019,7 +2019,7 @@ const App: React.FC = () => {
                  </div>
                )}
                <div className="grid md:grid-cols-[0.85fr_1.15fr] gap-4 w-full">
-                 <div className="game-panel rounded-lg p-4 text-left">
+                 <div className="game-panel flex flex-col rounded-lg p-4 text-left">
                    <h2 className="text-cyan-300 font-bold mb-3">{t('local_score_title')}</h2>
                    <div className="text-sm text-slate-300">{t('score')}</div>
                    <div className="text-4xl text-yellow-300 font-bold mb-3">{lastRunSummary?.score.toLocaleString() ?? '0'}</div>
@@ -2029,24 +2029,24 @@ const App: React.FC = () => {
                        <div className="text-sm text-yellow-200">
                          {uploadedScoreId ? t('already_uploaded') : uploadBusy ? t('uploading') : t('waiting_upload')}
                        </div>
-                       <div className="flex flex-wrap gap-2">
+                     </div>
+                   ) : (
+                     <p className="text-sm text-slate-300">{t('login_prompt')}</p>
+                   )}
+                   {authMessage && <div className="mt-3 text-xs text-yellow-200">{authMessage}</div>}
+                   <div className="mt-auto flex flex-wrap gap-2 pt-6">
+                     {authUser ? (
+                       <>
                          {!uploadedScoreId && !uploadBusy && (
                            <button onClick={() => void submitGlobalScore()} className="px-4 py-2 bg-yellow-400 text-slate-950 font-bold rounded-md hover:bg-yellow-300 transition-colors">{t('reupload')}</button>
                          )}
                          <button onClick={logout} className="px-4 py-2 game-button-secondary rounded-md">{t('logout')}</button>
-                         <button onClick={startRun} className="px-4 py-2 bg-yellow-400 text-slate-950 font-bold rounded-md hover:bg-yellow-300 transition-colors">{t('retry')}</button>
-                       </div>
-                     </div>
-                   ) : (
-                     <div className="space-y-3">
-                       <p className="text-sm text-slate-300">{t('login_prompt')}</p>
-                       <div className="flex flex-wrap gap-2">
-                         <button onClick={() => { setAuthMode('register'); setIsAuthModalOpen(true); }} className="px-4 py-2 game-button text-white font-bold rounded-md">{t('login_register_btn')}</button>
-                         <button onClick={startRun} className="px-4 py-2 bg-yellow-400 text-slate-950 font-bold rounded-md hover:bg-yellow-300 transition-colors">{t('retry')}</button>
-                       </div>
-                     </div>
-                   )}
-                   {authMessage && <div className="mt-3 text-xs text-yellow-200">{authMessage}</div>}
+                       </>
+                     ) : (
+                       <button onClick={() => { setAuthMode('register'); setIsAuthModalOpen(true); }} className="px-4 py-2 game-button text-white font-bold rounded-md">{t('login_register_btn')}</button>
+                     )}
+                     <button onClick={startRun} className="px-4 py-2 bg-yellow-400 text-slate-950 font-bold rounded-md hover:bg-yellow-300 transition-colors">{t('retry')}</button>
+                   </div>
                  </div>
 
                  <div className="game-panel rounded-lg p-4 w-full">
