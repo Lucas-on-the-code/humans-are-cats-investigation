@@ -36,7 +36,7 @@ import {
   NpcChatTarget,
 } from '../types';
 import { gameAudio } from '../utils/audioSystem';
-import { applyDampedAcceleration } from '../utils/frameRateMotion';
+import { applyDampedAcceleration, applySteppedGravity } from '../utils/frameRateMotion';
 
 interface GameCanvasProps {
   gameState: GameState;
@@ -1602,8 +1602,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         p.isDashing = false;
         p.isSliding = false;
         p.isGrounded = false;
-        p.vy += GRAVITY * dtScale;
-        p.y += p.vy * dtScale;
+        const verticalMotion = applySteppedGravity(p.y, p.vy, GRAVITY, dtScale);
+        p.y = verticalMotion.position;
+        p.vy = verticalMotion.velocity;
         p.x += p.vx * dtScale;
         p.vx *= Math.pow(0.985, dtScale);
         p.invulnerableTime = Math.max(p.invulnerableTime, 250);
@@ -1707,10 +1708,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         p.vx = Math.max(-MAX_MANUAL_SPEED, Math.min(MAX_MANUAL_SPEED, p.vx));
         if (horizontalInput === 0 && Math.abs(p.vx) < 0.08) p.vx = 0;
       }
-      if (!p.isDashing) p.vy += GRAVITY * dtScale;
-
       if (jumpEdge && p.isGrounded && !p.isSliding) {
-        p.vy = JUMP_FORCE;
+        // Start one gravity step before the legacy launch velocity so the first
+        // simulated 60 Hz frame still moves by exactly JUMP_FORCE.
+        p.vy = JUMP_FORCE - GRAVITY;
         p.isGrounded = false;
         playSound('JUMP');
       }
@@ -1722,7 +1723,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         p.isDashing = false;
         p.dashTime = 0;
       }
-      p.y += p.vy * dtScale;
+      if (p.isDashing) {
+        p.y += p.vy * dtScale;
+      } else {
+        const verticalMotion = applySteppedGravity(p.y, p.vy, GRAVITY, dtScale);
+        p.y = verticalMotion.position;
+        p.vy = verticalMotion.velocity;
+      }
       }
       if (ridingCar) {
         p.isGrounded = true;

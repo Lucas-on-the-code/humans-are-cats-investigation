@@ -13,3 +13,16 @@ export const applyDampedAcceleration = (
   const terminalVelocity = (input * acceleration * friction) / (1 - friction);
   return terminalVelocity + (velocity - terminalVelocity) * decay;
 };
+
+export const applySteppedGravity = (
+  position: number,
+  velocity: number,
+  gravity: number,
+  deltaFrames: number,
+) => {
+  const frames = Math.max(0, deltaFrames);
+  return {
+    position: position + velocity * frames + gravity * frames * (frames + 1) / 2,
+    velocity: velocity + gravity * frames,
+  };
+};
