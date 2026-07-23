@@ -14,6 +14,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
     "build:vocaloid-db": "node scripts/build-biliboard-hot-db.mjs",

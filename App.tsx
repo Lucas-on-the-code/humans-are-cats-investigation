@@ -1180,6 +1180,7 @@ const App: React.FC = () => {
   const [dismissedMikuIds, setDismissedMikuIds] = useState<Set<number>>(() => new Set());
   const [isCursorIdleHidden, setIsCursorIdleHidden] = useState<boolean>(false);
   const appShellRef = useRef<HTMLDivElement | null>(null);
+  const mobileControlsRef = useRef<HTMLDivElement | null>(null);
   const cursorIdleTimerRef = useRef<number | null>(null);
   const lyricCacheRef = useRef<Map<string, LyricLookupResult>>(new Map());
   const songContextTurnRef = useRef(0);
@@ -1826,6 +1827,26 @@ const App: React.FC = () => {
   const shouldHideCursor = canAutoHideCursor && isCursorIdleHidden;
 
   useEffect(() => {
+    const controls = mobileControlsRef.current;
+    if (!controls || gameState !== 'PLAYING' || !isMobile) return;
+
+    const preventNativeSelection = (event: Event) => {
+      event.preventDefault();
+    };
+    const nonPassiveOptions: AddEventListenerOptions = { passive: false };
+    const blockedEvents = ['touchstart', 'touchmove', 'contextmenu', 'selectstart', 'dragstart'] as const;
+
+    blockedEvents.forEach((eventName) => {
+      controls.addEventListener(eventName, preventNativeSelection, nonPassiveOptions);
+    });
+    return () => {
+      blockedEvents.forEach((eventName) => {
+        controls.removeEventListener(eventName, preventNativeSelection, nonPassiveOptions);
+      });
+    };
+  }, [gameState, isMobile]);
+
+  useEffect(() => {
     const clearCursorTimer = () => {
       if (cursorIdleTimerRef.current !== null) {
         window.clearTimeout(cursorIdleTimerRef.current);
@@ -2148,7 +2169,7 @@ const App: React.FC = () => {
       )}
 
       {gameState === 'PLAYING' && isMobile && (
-        <div className="absolute inset-0 pointer-events-none z-30 touch-none select-none [-webkit-tap-highlight-color:transparent]">
+        <div ref={mobileControlsRef} className="mobile-touch-controls absolute inset-0 pointer-events-none z-30 touch-none select-none [-webkit-tap-highlight-color:transparent]">
           <div className="absolute bottom-8 left-7 w-44 h-44 pointer-events-auto opacity-70 active:opacity-95 transition-opacity">
               <button aria-label={t('jump')} className="absolute top-0 left-1/3 w-1/3 h-1/3 rounded-t-2xl touch-control-button" onTouchStart={(e) => handleTouchStart('up', e)} onTouchEnd={(e) => handleTouchEnd('up', e)} onTouchCancel={(e) => handleTouchEnd('up', e)} onContextMenu={preventCtx}>▲</button>
               <button aria-label={t('crouch')} className="absolute bottom-0 left-1/3 w-1/3 h-1/3 rounded-b-2xl touch-control-button" onTouchStart={(e) => handleTouchStart('down', e)} onTouchEnd={(e) => handleTouchEnd('down', e)} onTouchCancel={(e) => handleTouchEnd('down', e)} onContextMenu={preventCtx}>▼</button>

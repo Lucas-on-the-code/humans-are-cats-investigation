@@ -42,6 +42,15 @@ input, textarea, [contenteditable="true"] {
   }
 }
 
+.mobile-touch-controls,
+.mobile-touch-controls * {
+  -webkit-touch-callout: none !important;
+  -webkit-user-select: none !important;
+  user-select: none !important;
+  -webkit-user-drag: none !important;
+  touch-action: none !important;
+}
+
 .pixel-font {
   font-family: var(--font-mono);
   letter-spacing: 0;

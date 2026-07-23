@@ -36,6 +36,7 @@ import {
   NpcChatTarget,
 } from '../types';
 import { gameAudio } from '../utils/audioSystem';
+import { consumeFixedSteps } from '../utils/fixedStep';
 
 interface GameCanvasProps {
   gameState: GameState;
@@ -82,6 +83,7 @@ const INTRO_DROP_ARC_HEIGHT = 70;
 const MANUAL_ACCEL = 0.82;
 const GROUND_FRICTION = 0.82;
 const AIR_FRICTION = 0.94;
+const POWERED_MOVE_FRICTION = AIR_FRICTION;
 const MAX_MANUAL_SPEED = MOVE_SPEED + 1.4;
 const PROJECTILE_SPEED = 17;
 const PROJECTILE_MAX_RANGE = 300;
@@ -142,7 +144,7 @@ const getDistanceMeters = (distancePx: number) => Math.floor(distancePx / PIXELS
 const getDistanceHeat = (distance: number) => Math.min(1, Math.max(0, distance / (CHUNK_LENGTH * 18)));
 const getChunkHeat = (index: number) => Math.min(1, Math.max(0, (index - 2) / 32));
 const getAllowedDanger = (heat: number) => (heat < 0.28 ? 1 : heat < 0.62 ? 2 : 3);
-const RUNNING_JUMP_START_VX = Math.min(MAX_MANUAL_SPEED, (MANUAL_ACCEL * GROUND_FRICTION) / (1 - GROUND_FRICTION));
+const RUNNING_JUMP_START_VX = Math.min(MAX_MANUAL_SPEED, (MANUAL_ACCEL * POWERED_MOVE_FRICTION) / (1 - POWERED_MOVE_FRICTION));
 const JUMP_COIN_START_FRAME = 6;
 const JUMP_COIN_END_FRAME = 40;
 
@@ -1494,6 +1496,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     };
 
     let lastFrameTime = performance.now();
+    let physicsRemainderMs = 0;
     let worldCleanupTick = 0;
     const frameInterval = () => 1000 / targetFpsRef.current;
     const scheduleLoop = () => {
@@ -1517,6 +1520,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
       isTabVisibleRef.current = true;
       lastFrameTime = performance.now();
+      physicsRemainderMs = 0;
       scheduleLoop();
     };
 
@@ -1532,12 +1536,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         scheduleLoop();
         return;
       }
-      // Cap delta so a single physics step cannot tunnel through thin obstacles.
-      // 33ms is roughly dtScale 2; full sub-stepping can remain a follow-up.
-      const clampedDelta = Math.min(deltaMs, 33);
-      const dtScale = clampedDelta / BASE_FRAME_MS;
       lastFrameTime = now;
-      update(dtScale);
+      const fixedStep = consumeFixedSteps(physicsRemainderMs, deltaMs, BASE_FRAME_MS, 5);
+      physicsRemainderMs = fixedStep.remainderMs;
+      for (let step = 0; step < fixedStep.steps; step++) update(1);
       syncNpcChatAnchor();
       draw();
       scheduleLoop();
@@ -1703,7 +1705,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         p.vx = p.direction * DASH_SPEED;
       } else {
         p.vx += horizontalInput * MANUAL_ACCEL * dtScale;
-        p.vx *= p.isGrounded ? GROUND_FRICTION : AIR_FRICTION;
+        const movementFriction = horizontalInput !== 0
+          ? POWERED_MOVE_FRICTION
+          : p.isGrounded ? GROUND_FRICTION : AIR_FRICTION;
+        p.vx *= movementFriction;
         p.vx = Math.max(-MAX_MANUAL_SPEED, Math.min(MAX_MANUAL_SPEED, p.vx));
         if (horizontalInput === 0 && Math.abs(p.vx) < 0.08) p.vx = 0;
       }
