@@ -62,6 +62,7 @@ const MIN_VIEWPORT_HEIGHT = 240;
 const MAX_RENDER_WIDTH = 1600;
 const MAX_RENDER_HEIGHT = 720;
 const MAX_CHUNKS_PER_GENERATION = 12;
+const COLLECT_FEEDBACK_INTERVAL_MS = 120;
 const VIRTUAL_GROUND_Y = 530;
 const BASE_FRAME_MS = 1000 / 60;
 const DEFAULT_PARTICLE_LIMIT = 220;
@@ -359,6 +360,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   ), []);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [loadProgress, setLoadProgress] = useState(0);
   const [dims, setDims] = useState(getViewportDims);
 
   const playerRef = useRef<Player>({
@@ -521,6 +523,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const loadAllAssets = async () => {
       const promises: Promise<void>[] = [];
       const tempImages: Record<string, DrawableAsset> = {};
+      let completedAssets = 0;
+      let totalAssets = 0;
+      if (mounted) setLoadProgress(0);
       gameAudio.registerSfx(AUDIO_URLS);
       gameAudio.preloadSfx();
 
@@ -543,6 +548,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           if (settled) return;
           settled = true;
           clearTimeout(timeoutId);
+          completedAssets++;
+          if (mounted && totalAssets > 0) setLoadProgress(completedAssets / totalAssets);
           res();
         };
         const timeoutId = window.setTimeout(done, 12000);
@@ -570,6 +577,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       NPC_SPRITE_URLS.forEach((s, i) => promises.push(addImage(`decor_npc_${i}`, withQuality(s, spriteQualityScaleRef.current), s)));
       NPC_VARIANT_2_URLS.forEach((s, i) => promises.push(addImage(`decor_npc_v2_${i}`, withQuality(s, spriteQualityScaleRef.current), s)));
       CAR_SPRITE_KEYS.forEach((key) => promises.push(addImage(`car_${key}`, `/sprites/cars/${key}.png`)));
+      totalAssets = promises.length;
 
       await Promise.all(promises);
       if (!mounted) return;
@@ -593,6 +601,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
       });
       layerDimsRef.current = tempDims;
+      setLoadProgress(1);
       setIsLoaded(true);
     };
     loadAllAssets();
@@ -763,7 +772,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     onNpcChatAnchorChange(getNpcChatAnchor(target));
   };
 
-  const awardScore = (base: number, label: string, x: number, y: number, combo = true) => {
+  const awardScore = (base: number, label: string | null, x: number, y: number, combo = true) => {
     const stats = statsRef.current;
     const now = Date.now();
     if (combo) {
@@ -774,7 +783,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     }
     const score = Math.round(base * stats.multiplier);
     stats.score += score;
-    addFloatingText(`${label} +${score}`, x, y, combo ? '#ffe066' : '#9ee6ff', combo ? 18 : 15);
+    if (label) addFloatingText(`${label} +${score}`, x, y, combo ? '#ffe066' : '#9ee6ff', combo ? 18 : 15);
   };
 
   const endRun = () => {
@@ -1421,41 +1430,71 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       playSound('DAMAGE');
     };
 
+    let lastCollectFeedbackAt = 0;
     const collectItem = (it: Item) => {
       if (it.collected) return;
       const p = playerRef.current;
       it.collected = true;
-      playSound('COLLECT');
       if (it.type === 'HEALTH') {
+        playSound('COLLECT');
         p.hp = Math.min(p.maxHp, p.hp + COMBAT.HEALTH_PACK_HEAL);
         addFloatingText(t('float_heal'), it.x, it.y, '#66f2c2', 16);
         emitParticles(it.x + 15, it.y + 15, '#66f2c2', 10, 5);
         return;
       }
       if (it.type === 'MAGNET') {
+        playSound('COLLECT');
         p.magnetTime = BOOST_TIME;
         awardScore(180, t('float_magnet'), it.x, it.y);
         emitParticles(it.x + 15, it.y + 15, '#9ee6ff', 12, 6);
         return;
       }
       if (it.type === 'SHIELD') {
+        playSound('COLLECT');
         p.shieldTime = BOOST_TIME;
         awardScore(180, t('float_shield'), it.x, it.y);
         emitParticles(it.x + 15, it.y + 15, '#66f2c2', 12, 6);
         return;
       }
       if (it.type === 'EVIDENCE') {
+        playSound('COLLECT');
         statsRef.current.evidence++;
         p.evidenceCollected = statsRef.current.evidence;
         awardScore(1000, t('float_data'), it.x, it.y);
         emitParticles(it.x + 15, it.y + 15, '#FFD700', 16, 7);
         return;
       }
-      awardScore(90, t('float_fish'), it.x, it.y);
-      emitParticles(it.x + 15, it.y + 15, '#ffe066', 6, 4);
+      const now = performance.now();
+      const shouldEmitFeedback = now - lastCollectFeedbackAt >= COLLECT_FEEDBACK_INTERVAL_MS;
+      if (shouldEmitFeedback) {
+        lastCollectFeedbackAt = now;
+        playSound('COLLECT');
+        awardScore(90, t('float_fish'), it.x, it.y);
+        emitParticles(it.x + 15, it.y + 15, '#ffe066', 6, 4);
+      } else {
+        awardScore(90, null, it.x, it.y);
+      }
+    };
+
+    const removeExpiredInPlace = <T extends { life: number }>(items: T[]) => {
+      for (let i = items.length - 1; i >= 0; i--) {
+        if (items[i].life <= 0) items.splice(i, 1);
+      }
+    };
+    const removeCollectedInPlace = (items: Item[]) => {
+      for (let i = items.length - 1; i >= 0; i--) {
+        if (items[i].collected) items.splice(i, 1);
+      }
+    };
+    const compactByBoundsInPlace = <T extends { x: number; width: number }>(items: T[], left: number, right: number) => {
+      for (let i = items.length - 1; i >= 0; i--) {
+        const item = items[i];
+        if (item.x + item.width <= left || item.x >= right) items.splice(i, 1);
+      }
     };
 
     let lastFrameTime = performance.now();
+    let worldCleanupTick = 0;
     const frameInterval = () => 1000 / targetFpsRef.current;
     const scheduleLoop = () => {
       if (
@@ -1524,9 +1563,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           cameraRef.current.x = getIntroCameraX(virtualWidth);
           if (anyTouchInput || anyKeyInput || pointerAction) startIntroJump();
           particlesRef.current.forEach((part) => { part.x += part.vx * dtScale; part.y += part.vy * dtScale; part.life -= dtScale; });
-          particlesRef.current = particlesRef.current.filter((part) => part.life > 0);
+          removeExpiredInPlace(particlesRef.current);
           floatingTextsRef.current.forEach((ft) => { ft.y += ft.vy * dtScale; ft.life -= dtScale; });
-          floatingTextsRef.current = floatingTextsRef.current.filter((ft) => ft.life > 0);
+          removeExpiredInPlace(floatingTextsRef.current);
           return;
         }
 
@@ -1546,9 +1585,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         cameraRef.current.x = lerp(introDropRef.current.startCameraX, targetCamX, cameraEase);
 
         particlesRef.current.forEach((part) => { part.x += part.vx * dtScale; part.y += part.vy * dtScale; part.life -= dtScale; });
-        particlesRef.current = particlesRef.current.filter((part) => part.life > 0);
+        removeExpiredInPlace(particlesRef.current);
         floatingTextsRef.current.forEach((ft) => { ft.y += ft.vy * dtScale; ft.life -= dtScale; });
-        floatingTextsRef.current = floatingTextsRef.current.filter((ft) => ft.life > 0);
+        removeExpiredInPlace(floatingTextsRef.current);
 
         if (introProgress >= 1) {
           p.x = RUN_START_X;
@@ -1578,14 +1617,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           car.x += car.vx * dtScale;
         });
         particlesRef.current.forEach((part) => { part.x += part.vx * dtScale; part.y += part.vy * dtScale; part.life -= dtScale; });
-        particlesRef.current = particlesRef.current.filter((part) => part.life > 0);
+        removeExpiredInPlace(particlesRef.current);
         floatingTextsRef.current.forEach((ft) => { ft.y += ft.vy * dtScale; ft.life -= dtScale; });
-        floatingTextsRef.current = floatingTextsRef.current.filter((ft) => ft.life > 0);
+        removeExpiredInPlace(floatingTextsRef.current);
         if (screenShakeRef.current > 0) screenShakeRef.current = Math.max(0, screenShakeRef.current - 1.2 * dtScale);
 
         const viewLeft = cameraRef.current.x - CLEAN_BEHIND;
         const viewRight = cameraRef.current.x + virtualWidth + CLEAN_BEHIND;
-        carsRef.current = carsRef.current.filter((o) => o.x + o.width > viewLeft && o.x < viewRight);
+        compactByBoundsInPlace(carsRef.current, viewLeft, viewRight);
 
         const elapsed = now - deathAnimRef.current.startedAt;
         if (elapsed > DEATH_ANIM_MAX_MS || p.y > BASE_HEIGHT + 180) endRun();
@@ -1617,8 +1656,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       if (p.invulnerableTime > 0) p.invulnerableTime = Math.max(0, p.invulnerableTime - 16 * dtScale);
       if (p.magnetTime > 0) p.magnetTime = Math.max(0, p.magnetTime - 16 * dtScale);
       if (p.shieldTime > 0) p.shieldTime = Math.max(0, p.shieldTime - 16 * dtScale);
-      if (p.slideTime > 0) p.slideTime = Math.max(0, p.slideTime - 16 * dtScale);
-      p.isSliding = p.slideTime > 0 || (slidePressed && p.isGrounded);
+      p.slideTime = 0;
+      p.isSliding = slidePressed && p.isGrounded;
       const prevY = p.y;
 
       if (isTextInputActive) {
@@ -1675,8 +1714,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         p.isGrounded = false;
         playSound('JUMP');
       }
-      if (slidePressed && p.isGrounded) p.slideTime = 520;
-
       p.x += p.vx * dtScale;
       const leftWallX = leftAirWallXRef.current;
       if (p.x < leftWallX) {
@@ -1914,12 +1951,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           }
         });
       });
-      projectilesRef.current = projectilesRef.current.filter((pr) => pr.life > 0);
+      removeExpiredInPlace(projectilesRef.current);
 
+      const pickupHitbox = getPlayerPickupHitbox();
       itemsRef.current.forEach((it) => {
         it.floatOffset = Math.sin(now / 200 + it.id) * 8;
         const itemCircle = getItemPickupCircle(it);
-        const pickupHitbox = getPlayerPickupHitbox();
         if (p.magnetTime > 0 && !it.collected) {
           const targetX = pickupHitbox.x + pickupHitbox.width / 2;
           const targetY = pickupHitbox.y + pickupHitbox.height / 2;
@@ -1932,14 +1969,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             it.y += dy * pull;
           }
         }
-        if (!it.collected && circleRectOverlap(getItemPickupCircle(it), pickupHitbox)) collectItem(it);
+        if (!it.collected && circleRectOverlap(itemCircle, pickupHitbox)) collectItem(it);
       });
-      itemsRef.current = itemsRef.current.filter((it) => !it.collected);
+      removeCollectedInPlace(itemsRef.current);
 
       particlesRef.current.forEach((part) => { part.x += part.vx * dtScale; part.y += part.vy * dtScale; part.life -= dtScale; });
-      particlesRef.current = particlesRef.current.filter((part) => part.life > 0);
+      removeExpiredInPlace(particlesRef.current);
       floatingTextsRef.current.forEach((ft) => { ft.y += ft.vy * dtScale; ft.life -= dtScale; });
-      floatingTextsRef.current = floatingTextsRef.current.filter((ft) => ft.life > 0);
+      removeExpiredInPlace(floatingTextsRef.current);
       if (screenShakeRef.current > 0) screenShakeRef.current = Math.max(0, screenShakeRef.current - 1.2 * dtScale);
 
       const CLEANUP_BUFFER_LEFT = virtualWidth * 1.5;
@@ -1953,15 +1990,24 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         cleanupLeft + virtualWidth * 0.4,
       );
 
-      platformsRef.current = platformsRef.current.filter(o => o.x + o.width > cleanupLeft && o.x < cleanupRight);
-      hazardsRef.current = hazardsRef.current.filter(o => o.x + o.width > cleanupLeft && o.x < cleanupRight);
-      obstaclesRef.current = obstaclesRef.current.filter(o => o.x + o.width > cleanupLeft && o.x < cleanupRight);
-      pedestriansRef.current = pedestriansRef.current.filter(o => o.x + o.width > cleanupLeft && o.x < cleanupRight);
-      npcsRef.current = npcsRef.current.filter(o => o.x + o.width > cleanupLeft && o.x < cleanupRight);
-      itemsRef.current = itemsRef.current.filter(o => o.x + o.width > cleanupLeft && o.x < cleanupRight);
+      worldCleanupTick++;
+      if (worldCleanupTick >= 30) {
+        worldCleanupTick = 0;
+        compactByBoundsInPlace(platformsRef.current, cleanupLeft, cleanupRight);
+        compactByBoundsInPlace(hazardsRef.current, cleanupLeft, cleanupRight);
+        compactByBoundsInPlace(obstaclesRef.current, cleanupLeft, cleanupRight);
+        compactByBoundsInPlace(pedestriansRef.current, cleanupLeft, cleanupRight);
+        compactByBoundsInPlace(npcsRef.current, cleanupLeft, cleanupRight);
+        compactByBoundsInPlace(itemsRef.current, cleanupLeft, cleanupRight);
 
-      const CAR_CLEANUP_LEFT = cameraRef.current.x - 3000;
-      carsRef.current = carsRef.current.filter(o => o.occupied || (o.x + o.width > CAR_CLEANUP_LEFT && o.x < cleanupRight));
+        const carCleanupLeft = cameraRef.current.x - 3000;
+        for (let i = carsRef.current.length - 1; i >= 0; i--) {
+          const car = carsRef.current[i];
+          if (!car.occupied && (car.x + car.width <= carCleanupLeft || car.x >= cleanupRight)) {
+            carsRef.current.splice(i, 1);
+          }
+        }
+      }
 
       const minCameraX = Math.max(0, leftAirWallXRef.current - virtualWidth * AIR_WALL_CAMERA_SAFE_RATIO);
       const targetCamX = Math.max(minCameraX, getRunCameraX(p.x, virtualWidth));
@@ -2549,12 +2595,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       <div className="text-cyan-500 font-mono text-2xl animate-pulse tracking-widest uppercase">{t('loading_init')}</div>
       <div className="w-64 h-2 bg-slate-800 rounded-full overflow-hidden relative">
         <div className="absolute inset-0 bg-cyan-500/30 animate-[shimmer_2s_infinite]"></div>
-        <div className="h-full bg-cyan-500 shadow-[0_0_10px_#06b6d4] transition-all duration-500" style={{ width: '60%' }}></div>
+        <div className="h-full bg-cyan-500 shadow-[0_0_10px_#06b6d4] transition-[width] duration-200" style={{ width: `${Math.round(loadProgress * 100)}%` }}></div>
       </div>
-      <div className="text-slate-500 font-mono text-xs animate-pulse">{t('loading_sync')}</div>
+      <div className="text-slate-400 font-mono text-xs">{Math.round(loadProgress * 100)}% · {t('loading_sync')}</div>
     </div>
   );
 
   const renderDims = getRenderDims(dims);
-  return <canvas ref={canvasRef} width={renderDims.width} height={renderDims.height} onPointerDown={handleCanvasPointerDown} className="block w-full h-full bg-[#050510]" />;
+  return (
+    <canvas ref={canvasRef} width={renderDims.width} height={renderDims.height} onPointerDown={handleCanvasPointerDown} className="block w-full h-full bg-[#050510]" />
+  );
 };

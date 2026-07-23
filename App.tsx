@@ -2029,15 +2029,21 @@ const App: React.FC = () => {
                        <div className="text-sm text-yellow-200">
                          {uploadedScoreId ? t('already_uploaded') : uploadBusy ? t('uploading') : t('waiting_upload')}
                        </div>
-                       {!uploadedScoreId && !uploadBusy && (
-                         <button onClick={() => void submitGlobalScore()} className="px-4 py-2 bg-yellow-400 text-slate-950 font-bold rounded-md hover:bg-yellow-300 transition-colors">{t('reupload')}</button>
-                       )}
-                       <button onClick={logout} className="px-4 py-2 game-button-secondary rounded-md">{t('logout')}</button>
+                       <div className="flex flex-wrap gap-2">
+                         {!uploadedScoreId && !uploadBusy && (
+                           <button onClick={() => void submitGlobalScore()} className="px-4 py-2 bg-yellow-400 text-slate-950 font-bold rounded-md hover:bg-yellow-300 transition-colors">{t('reupload')}</button>
+                         )}
+                         <button onClick={logout} className="px-4 py-2 game-button-secondary rounded-md">{t('logout')}</button>
+                         <button onClick={startRun} className="px-4 py-2 bg-yellow-400 text-slate-950 font-bold rounded-md hover:bg-yellow-300 transition-colors">{t('retry')}</button>
+                       </div>
                      </div>
                    ) : (
                      <div className="space-y-3">
                        <p className="text-sm text-slate-300">{t('login_prompt')}</p>
-                       <button onClick={() => { setAuthMode('register'); setIsAuthModalOpen(true); }} className="px-4 py-2 game-button text-white font-bold rounded-md">{t('login_register_btn')}</button>
+                       <div className="flex flex-wrap gap-2">
+                         <button onClick={() => { setAuthMode('register'); setIsAuthModalOpen(true); }} className="px-4 py-2 game-button text-white font-bold rounded-md">{t('login_register_btn')}</button>
+                         <button onClick={startRun} className="px-4 py-2 bg-yellow-400 text-slate-950 font-bold rounded-md hover:bg-yellow-300 transition-colors">{t('retry')}</button>
+                       </div>
                      </div>
                    )}
                    {authMessage && <div className="mt-3 text-xs text-yellow-200">{authMessage}</div>}
@@ -2076,7 +2082,6 @@ const App: React.FC = () => {
                    </div>
                  </div>
                </div>
-               <button onClick={startRun} className="px-16 py-5 game-button font-bold pixel-font text-white text-xl rounded-md">{t('retry')}</button>
              </div>
           ) : (
             !introComplete ? <TypewriterEffect key={currentLang} text={LYRICS.intro.map((line) => t(line))} onComplete={() => setIntroComplete(true)} /> : (

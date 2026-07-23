@@ -204,7 +204,7 @@ const resources = {
       title_long_distance: "远距调查员",
       title_evidence_hunter: "证据猎手",
       title_trainee: "见习调查员",
-      loading_init: "Initializing CAT_NET...",
+      loading_init: "正在初始化 CAT_NET...",
       loading_sync: "正在同步现实世界与猫星通讯...",
     },
   },

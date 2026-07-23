@@ -32,7 +32,7 @@ const clamp01 = (value: number) => {
 
 const isBrowser = () => typeof window !== 'undefined' && typeof document !== 'undefined';
 
-const shouldUseHtmlAudioOnly = () => {
+const shouldUseHtmlMusicOnly = () => {
   if (!isBrowser()) return false;
   const ua = navigator.userAgent;
   const platform = navigator.platform || '';
@@ -56,7 +56,7 @@ const isRetryablePlayError = (error: unknown) => {
 
 class GameAudioSystem {
   private readonly sfxTracks = new Map<string, SfxTrack>();
-  private readonly htmlAudioOnly = shouldUseHtmlAudioOnly();
+  private readonly htmlMusicOnly = shouldUseHtmlMusicOnly();
   private volumes: VolumeState = { master: 0.5, sfx: 0.35, music: 0.3 };
   private audioContext: AudioContext | null = null;
   private music: HTMLAudioElement | null = null;
@@ -245,7 +245,6 @@ class GameAudioSystem {
 
   private getAudioContext() {
     if (!isBrowser()) return null;
-    if (this.htmlAudioOnly) return null;
     if (this.audioContext?.state === 'closed') this.audioContext = null;
     if (this.audioContext) return this.audioContext;
     const AudioContextCtor = window.AudioContext || (window as typeof window & { webkitAudioContext?: AudioContextConstructor }).webkitAudioContext;
@@ -297,6 +296,7 @@ class GameAudioSystem {
   }
 
   private ensureMusicBuffer() {
+    if (this.htmlMusicOnly) return;
     if (!this.musicSrc || this.musicBuffer || this.musicBufferPromise) return;
     const ctx = this.getAudioContext();
     if (!ctx) return;
@@ -357,14 +357,11 @@ class GameAudioSystem {
   }
 
   private nextPoolAudio(track: SfxTrack) {
-    const initialPoolSize = track.key === 'collect' ? 16 : 6;
     const maxPoolSize = track.key === 'collect' ? 32 : 10;
+    const base = this.ensureBaseAudio(track);
+
     if (track.pool.length === 0) {
-      const base = this.ensureBaseAudio(track);
-      track.pool = [
-        base,
-        ...Array.from({ length: initialPoolSize - 1 }, () => this.createAudioElement(track.src)),
-      ];
+      track.pool = [base];
     }
 
     const available = track.pool.find((audio) => audio.paused || audio.ended);
@@ -436,8 +433,8 @@ class GameAudioSystem {
     }
 
     const ctx = this.getAudioContext();
-    if (ctx) this.ensureMusicBuffer();
-    if (ctx?.state === 'running' && this.musicBuffer) {
+    if (ctx && !this.htmlMusicOnly) this.ensureMusicBuffer();
+    if (!this.htmlMusicOnly && ctx?.state === 'running' && this.musicBuffer) {
       if (!this.music.paused) {
         this.musicOffset = this.music.currentTime || this.musicOffset;
         this.music.pause();
@@ -448,7 +445,7 @@ class GameAudioSystem {
 
     if (this.musicSource && this.musicBuffer) {
       this.stopWebAudioMusic();
-    } else {
+    } else if (!this.htmlMusicOnly && (this.music.paused || this.music.ended)) {
       this.syncHtmlMusicPosition();
     }
 
@@ -534,7 +531,7 @@ class GameAudioSystem {
       this.musicOffset = this.getLiveWebAudioMusicOffset();
     }
     if (options.reset) this.musicOffset = 0;
-    this.syncHtmlMusicPosition();
+    if (!this.htmlMusicOnly) this.syncHtmlMusicPosition();
     if (!source) return;
 
     this.musicSource = null;
