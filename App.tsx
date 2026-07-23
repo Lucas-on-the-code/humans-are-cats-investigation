@@ -1123,6 +1123,14 @@ const isPhoneOrIpad = () => {
   return maxTouchPoints > 0 && (isPhone || isIpad);
 };
 
+const isPortraitViewport = () => {
+  if (typeof window === 'undefined') return false;
+  const viewport = window.visualViewport;
+  const width = viewport?.width ?? window.innerWidth;
+  const height = viewport?.height ?? window.innerHeight;
+  return height > width;
+};
+
 const isSafariBrowser = () => {
   if (typeof navigator === 'undefined') return false;
   const ua = navigator.userAgent;
@@ -1164,6 +1172,7 @@ const App: React.FC = () => {
   const [isRunMusicReady, setIsRunMusicReady] = useState<boolean>(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [isMobile, setIsMobile] = useState<boolean>(false);
+  const [isPortrait, setIsPortrait] = useState<boolean>(isPortraitViewport);
   const [activeNpcChat, setActiveNpcChat] = useState<ActiveNpcChat | null>(null);
   const [dismissedMikuIds, setDismissedMikuIds] = useState<Set<number>>(() => new Set());
   const [isCursorIdleHidden, setIsCursorIdleHidden] = useState<boolean>(false);
@@ -1408,6 +1417,7 @@ const App: React.FC = () => {
   useEffect(() => {
     const checkDevice = () => {
       setIsMobile(isPhoneOrIpad());
+      setIsPortrait(isPortraitViewport());
     };
     checkDevice();
     window.addEventListener('resize', checkDevice);
@@ -1834,12 +1844,20 @@ const App: React.FC = () => {
 
   const displayedGlobalLeaderboard = globalLeaderboard.slice(0, 50);
   const viewerIsInTopList = !!viewerLeaderboardEntry && displayedGlobalLeaderboard.some((entry) => entry.id === viewerLeaderboardEntry.id);
-  const shouldMountGameCanvas = gameState !== 'MENU';
+  const shouldMountGameCanvas = gameState !== 'MENU' && !isPortrait;
 
   return (
     <div ref={appShellRef} className={`fixed inset-0 bg-[#050510] overflow-hidden font-mono selection:bg-cyan-500 selection:text-black ${shouldHideCursor ? 'cursor-none' : 'cursor-auto'}`}>
       {shouldHideCursor && <style>{'* { cursor: none !important; }'}</style>}
       <button aria-label={t('settings_title')} onClick={() => setIsSettingsOpen(true)} className="absolute top-5 right-5 z-50 h-11 w-11 rounded-full game-panel text-white text-lg hover:border-cyan-300/70 transition-all active:scale-95">⚙</button>
+
+      {isPortrait && (
+        <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center gap-5 bg-[#050510] p-8 text-center text-white">
+          <div className="text-6xl" aria-hidden="true">↻</div>
+          <h1 className="pixel-font text-2xl font-bold text-cyan-200">{t('portrait_rotate')}</h1>
+          <p className="max-w-sm text-sm leading-6 text-slate-300">{t('portrait_hint')}</p>
+        </div>
+      )}
 
       {isSettingsOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/90 p-4">
@@ -2096,7 +2114,7 @@ const App: React.FC = () => {
           <div className="absolute bottom-8 right-7 flex gap-4 pointer-events-auto opacity-75 active:opacity-100 transition-opacity items-end text-white">
              <button aria-label={t('interact')} className="w-16 h-16 rounded-full touch-control-button font-bold text-lg flex items-center justify-center mb-10 text-yellow-100" onTouchStart={(e) => handleTouchStart('interact', e)} onTouchEnd={(e) => handleTouchEnd('interact', e)} onTouchCancel={(e) => handleTouchEnd('interact', e)} onContextMenu={preventCtx}>E</button>
              <div className="flex flex-col gap-5">
-               <button aria-label={t('action')} className="w-24 h-24 rounded-full touch-control-button font-bold text-3xl flex items-center justify-center text-cyan-50" onTouchStart={(e) => handleTouchStart('action', e)} onTouchEnd={(e) => handleTouchEnd('action', e)} onTouchCancel={(e) => handleTouchEnd('action', e)} onContextMenu={preventCtx}>●</button>
+               <button aria-label={t('jump')} className="w-24 h-24 rounded-full touch-control-button font-bold text-3xl flex items-center justify-center text-cyan-50" onTouchStart={(e) => handleTouchStart('up', e)} onTouchEnd={(e) => handleTouchEnd('up', e)} onTouchCancel={(e) => handleTouchEnd('up', e)} onContextMenu={preventCtx}>跳</button>
                <div className="flex gap-4">
                  <button aria-label={t('dash')} className="w-20 h-20 rounded-full touch-control-button font-bold text-xl flex items-center justify-center text-blue-100" onTouchStart={(e) => handleTouchStart('dash', e)} onTouchEnd={(e) => handleTouchEnd('dash', e)} onTouchCancel={(e) => handleTouchEnd('dash', e)} onContextMenu={preventCtx}>D</button>
                  <button aria-label={t('attack')} className="w-20 h-20 rounded-full touch-control-button font-bold text-xl flex items-center justify-center text-rose-100" onTouchStart={(e) => handleTouchStart('attack', e)} onTouchEnd={(e) => handleTouchEnd('attack', e)} onTouchCancel={(e) => handleTouchEnd('attack', e)} onContextMenu={preventCtx}>F</button>
