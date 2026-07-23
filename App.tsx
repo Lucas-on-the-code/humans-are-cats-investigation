@@ -1004,7 +1004,7 @@ const NpcChatBox: React.FC<{
 
   return (
     <div
-      className={`absolute z-40 pointer-events-auto pixel-font ${isMiku ? 'w-[min(340px,calc(100vw-24px))]' : 'w-[min(280px,calc(100vw-24px))]'}`}
+      className={`absolute z-20 pointer-events-auto pixel-font ${isMiku ? 'w-[min(340px,calc(100vw-24px))]' : 'w-[min(280px,calc(100vw-24px))]'}`}
       style={bubbleStyle}
     >
       <div className="relative game-panel-strong text-slate-50 rounded-lg px-3 py-2">
@@ -1103,7 +1103,7 @@ const TypewriterEffect: React.FC<{ text: string[], onComplete: () => void }> = (
   };
 
   return (
-    <div onClick={handleClick} className="font-mono text-emerald-200 text-sm md:text-base leading-relaxed p-6 intro-terminal rounded-lg cursor-pointer transition-colors">
+    <div onClick={handleClick} className="max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain font-mono text-emerald-200 text-sm md:text-base leading-relaxed p-4 md:p-6 intro-terminal rounded-lg cursor-pointer transition-colors">
       {displayedLines.map((line, i) => <div key={i} className="min-h-[1.5em]">{line}</div>)}
       {!isFinished && <span className="inline-block w-2 h-4 bg-emerald-300 animate-pulse ml-1"></span>}
       <div className="text-right text-xs text-emerald-400/70 mt-4 animate-pulse">
@@ -1130,6 +1130,8 @@ const isPortraitViewport = () => {
   const height = viewport?.height ?? window.innerHeight;
   return height > width;
 };
+
+const LANDSCAPE_SETTLE_DELAY_MS = 450;
 
 const isSafariBrowser = () => {
   if (typeof navigator === 'undefined') return false;
@@ -1173,6 +1175,7 @@ const App: React.FC = () => {
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [isMobile, setIsMobile] = useState<boolean>(false);
   const [isPortrait, setIsPortrait] = useState<boolean>(isPortraitViewport);
+  const [isLandscapeStable, setIsLandscapeStable] = useState<boolean>(() => !isPortraitViewport());
   const [activeNpcChat, setActiveNpcChat] = useState<ActiveNpcChat | null>(null);
   const [dismissedMikuIds, setDismissedMikuIds] = useState<Set<number>>(() => new Set());
   const [isCursorIdleHidden, setIsCursorIdleHidden] = useState<boolean>(false);
@@ -1415,16 +1418,51 @@ const App: React.FC = () => {
   }, [isGameOver, authToken, lastRunSummary, currentRunToken, uploadedScoreId, uploadBusy, uploadAttemptedRunToken]);
 
   useEffect(() => {
-    const checkDevice = () => {
-      setIsMobile(isPhoneOrIpad());
-      setIsPortrait(isPortraitViewport());
+    let landscapeSettleTimer: number | null = null;
+    let isWaitingForLandscapeToSettle = isPortraitViewport();
+
+    const clearLandscapeSettleTimer = () => {
+      if (landscapeSettleTimer === null) return;
+      window.clearTimeout(landscapeSettleTimer);
+      landscapeSettleTimer = null;
     };
-    checkDevice();
-    window.addEventListener('resize', checkDevice);
-    window.visualViewport?.addEventListener('resize', checkDevice);
+
+    const checkDevice = (waitForStableLandscape: boolean) => {
+      const isCurrentlyPortrait = isPortraitViewport();
+      setIsMobile(isPhoneOrIpad());
+      setIsPortrait(isCurrentlyPortrait);
+
+      if (isCurrentlyPortrait) {
+        clearLandscapeSettleTimer();
+        isWaitingForLandscapeToSettle = true;
+        setIsLandscapeStable(false);
+        return;
+      }
+
+      if (!waitForStableLandscape || !isWaitingForLandscapeToSettle) {
+        setIsLandscapeStable(true);
+        return;
+      }
+
+      clearLandscapeSettleTimer();
+      setIsLandscapeStable(false);
+      landscapeSettleTimer = window.setTimeout(() => {
+        landscapeSettleTimer = null;
+        if (isPortraitViewport()) return;
+        isWaitingForLandscapeToSettle = false;
+        setIsLandscapeStable(true);
+      }, LANDSCAPE_SETTLE_DELAY_MS);
+    };
+
+    const handleViewportResize = () => checkDevice(true);
+
+    checkDevice(false);
+    window.addEventListener('resize', handleViewportResize);
+    window.visualViewport?.addEventListener('resize', handleViewportResize);
     return () => {
-      window.removeEventListener('resize', checkDevice);
-      window.visualViewport?.removeEventListener('resize', checkDevice);
+      clearLandscapeSettleTimer();
+      window.removeEventListener('resize', handleViewportResize);
+      window.visualViewport?.removeEventListener('resize', handleViewportResize);
     };
   }, []);
 
@@ -1434,14 +1472,13 @@ const App: React.FC = () => {
   }, [isMobile, gameState]);
 
   useEffect(() => {
-    if (safariCompatMode && gameState === 'MENU') return;
     gameAudio.setMusic('/audio/bgm.mp3', { loop: true });
     const cleanupUnlock = gameAudio.installGestureUnlock();
     return () => {
       cleanupUnlock();
       gameAudio.stopMusic({ reset: true });
     };
-  }, [gameState, safariCompatMode]);
+  }, []);
 
   useEffect(() => {
     gameAudio.setVolumes({ master: masterVolume, sfx: sfxVolume, music: musicVolume });
@@ -1844,7 +1881,7 @@ const App: React.FC = () => {
 
   const displayedGlobalLeaderboard = globalLeaderboard.slice(0, 50);
   const viewerIsInTopList = !!viewerLeaderboardEntry && displayedGlobalLeaderboard.some((entry) => entry.id === viewerLeaderboardEntry.id);
-  const shouldMountGameCanvas = gameState !== 'MENU' && !isPortrait;
+  const shouldMountGameCanvas = gameState !== 'MENU' && !isPortrait && isLandscapeStable;
 
   return (
     <div ref={appShellRef} className={`fixed inset-0 bg-[#050510] overflow-hidden font-mono selection:bg-cyan-500 selection:text-black ${shouldHideCursor ? 'cursor-none' : 'cursor-auto'}`}>
@@ -1860,8 +1897,8 @@ const App: React.FC = () => {
       )}
 
       {isSettingsOpen && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/90 p-4">
-          <div className="game-panel-strong p-6 md:p-8 rounded-lg w-full max-w-sm text-white">
+        <div className="fixed inset-0 z-[60] flex items-start md:items-center justify-center overflow-y-auto bg-slate-950/90 p-3 md:p-4">
+          <div className="game-panel-strong my-auto max-h-[calc(100dvh-1.5rem)] overflow-y-auto p-4 md:p-8 rounded-lg w-full max-w-sm text-white">
             <h2 className="text-2xl font-bold mb-7 pixel-font text-center text-cyan-200">{t('settings_title')}</h2>
             <div className="mb-7">
               <label className="text-slate-300 text-sm font-bold mb-3 flex justify-between">
@@ -1957,9 +1994,9 @@ const App: React.FC = () => {
       )}
 
       {gameState === 'MENU' && (
-        <div className="absolute inset-0 main-menu-screen flex flex-col items-center justify-center text-center p-4 z-40">
+        <div className="absolute inset-0 main-menu-screen flex flex-col items-center justify-center overflow-y-auto text-center p-4 z-40">
           {isGameOver ? (
-             <div className="animate-in fade-in zoom-in duration-500 flex flex-col items-center gap-6 w-full max-w-4xl">
+             <div className="animate-in fade-in zoom-in duration-500 flex min-h-full flex-col items-center justify-start gap-4 md:gap-6 w-full max-w-4xl py-6">
                <h1 className="text-5xl md:text-7xl text-cyan-100 font-bold pixel-font drop-shadow-[0_0_30px_rgba(34,211,238,0.42)]">{t('game_over_title')}</h1>
                {lastRunSummary && (
                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 w-full">
@@ -2022,19 +2059,21 @@ const App: React.FC = () => {
                    <div className="grid grid-cols-[48px_1fr_90px_80px] gap-2 text-xs text-slate-400 px-2 pb-2 border-b border-slate-800">
                      <span>#</span><span>{t('player')}</span><span>{t('score')}</span><span>{t('distance')}</span>
                    </div>
-                   {displayedGlobalLeaderboard.length === 0 ? (
-                     <div className="text-slate-500 py-6">{t('no_global_records')}</div>
-                   ) : displayedGlobalLeaderboard.map((entry) => {
-                     const isViewerEntry = !!authUser && entry.userId === authUser.id;
-                     return (
-                     <div key={entry.id} className={`grid grid-cols-[48px_1fr_90px_80px] gap-2 text-sm px-2 py-2 border-b border-slate-900 ${isViewerEntry ? 'bg-cyan-950/60 text-cyan-50 ring-1 ring-cyan-500/70' : 'text-white'}`}>
-                       <span className="text-yellow-300">{entry.rank}</span>
-                       <span className={isViewerEntry ? 'font-bold text-cyan-100' : ''}>{entry.playerName}</span>
-                       <span>{entry.score.toLocaleString()}</span>
-                       <span>{entry.distance}m</span>
-                     </div>
-                     );
-                   })}
+                   <div className="max-h-[min(42dvh,360px)] overflow-y-auto overscroll-contain">
+                     {displayedGlobalLeaderboard.length === 0 ? (
+                       <div className="text-slate-500 py-6">{t('no_global_records')}</div>
+                     ) : displayedGlobalLeaderboard.map((entry) => {
+                       const isViewerEntry = !!authUser && entry.userId === authUser.id;
+                       return (
+                       <div key={entry.id} className={`grid grid-cols-[48px_1fr_90px_80px] gap-2 text-sm px-2 py-2 border-b border-slate-900 ${isViewerEntry ? 'bg-cyan-950/60 text-cyan-50 ring-1 ring-cyan-500/70' : 'text-white'}`}>
+                         <span className="text-yellow-300">{entry.rank}</span>
+                         <span className={isViewerEntry ? 'font-bold text-cyan-100' : ''}>{entry.playerName}</span>
+                         <span>{entry.score.toLocaleString()}</span>
+                         <span>{entry.distance}m</span>
+                       </div>
+                       );
+                     })}
+                   </div>
                  </div>
                </div>
                <button onClick={startRun} className="px-16 py-5 game-button font-bold pixel-font text-white text-xl rounded-md">{t('retry')}</button>

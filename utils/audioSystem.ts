@@ -32,6 +32,15 @@ const clamp01 = (value: number) => {
 
 const isBrowser = () => typeof window !== 'undefined' && typeof document !== 'undefined';
 
+const shouldUseHtmlAudioOnly = () => {
+  if (!isBrowser()) return false;
+  const ua = navigator.userAgent;
+  const platform = navigator.platform || '';
+  const isIosOrIpadOs = /iPhone|iPad|iPod/i.test(ua)
+    || (platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  return isIosOrIpadOs;
+};
+
 const isNotAllowedError = (error: unknown) => (
   typeof error === 'object'
     && error !== null
@@ -47,6 +56,7 @@ const isRetryablePlayError = (error: unknown) => {
 
 class GameAudioSystem {
   private readonly sfxTracks = new Map<string, SfxTrack>();
+  private readonly htmlAudioOnly = shouldUseHtmlAudioOnly();
   private volumes: VolumeState = { master: 0.5, sfx: 0.35, music: 0.3 };
   private audioContext: AudioContext | null = null;
   private music: HTMLAudioElement | null = null;
@@ -235,6 +245,7 @@ class GameAudioSystem {
 
   private getAudioContext() {
     if (!isBrowser()) return null;
+    if (this.htmlAudioOnly) return null;
     if (this.audioContext?.state === 'closed') this.audioContext = null;
     if (this.audioContext) return this.audioContext;
     const AudioContextCtor = window.AudioContext || (window as typeof window & { webkitAudioContext?: AudioContextConstructor }).webkitAudioContext;
@@ -349,7 +360,11 @@ class GameAudioSystem {
     const initialPoolSize = track.key === 'collect' ? 16 : 6;
     const maxPoolSize = track.key === 'collect' ? 32 : 10;
     if (track.pool.length === 0) {
-      track.pool = Array.from({ length: initialPoolSize }, () => this.createAudioElement(track.src));
+      const base = this.ensureBaseAudio(track);
+      track.pool = [
+        base,
+        ...Array.from({ length: initialPoolSize - 1 }, () => this.createAudioElement(track.src)),
+      ];
     }
 
     const available = track.pool.find((audio) => audio.paused || audio.ended);

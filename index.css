@@ -16,7 +16,7 @@ body {
 }
 
 /* 禁止选中文本 / 长按弹出菜单（游戏体验）；输入框除外，保证登录与聊天可正常输入 */
-html, body {
+html, body, #root, #root * {
   -webkit-user-select: none;
   -moz-user-select: none;
   user-select: none;
@@ -27,6 +27,19 @@ input, textarea, [contenteditable="true"] {
   -webkit-user-select: text;
   -moz-user-select: text;
   user-select: text;
+}
+
+@media (pointer: coarse) {
+  input, textarea, [contenteditable="true"] {
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+  }
+
+  img {
+    -webkit-user-drag: none;
+  }
 }
 
 .pixel-font {
