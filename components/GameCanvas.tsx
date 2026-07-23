@@ -36,7 +36,7 @@ import {
   NpcChatTarget,
 } from '../types';
 import { gameAudio } from '../utils/audioSystem';
-import { consumeFixedSteps } from '../utils/fixedStep';
+import { applyDampedAcceleration } from '../utils/frameRateMotion';
 
 interface GameCanvasProps {
   gameState: GameState;
@@ -66,6 +66,8 @@ const MAX_CHUNKS_PER_GENERATION = 12;
 const COLLECT_FEEDBACK_INTERVAL_MS = 120;
 const VIRTUAL_GROUND_Y = 530;
 const BASE_FRAME_MS = 1000 / 60;
+const TARGET_RENDER_FPS = 60;
+const FRAME_INTERVAL_TOLERANCE_MS = 0.75;
 const DEFAULT_PARTICLE_LIMIT = 220;
 const DEFAULT_PROJECTILE_LIMIT = 60;
 const RUN_START_X = 220;
@@ -414,7 +416,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const imagesRef = useRef<Record<string, DrawableAsset>>({});
   const layerDimsRef = useRef<Record<string, LayerDim>>({});
   const isTabVisibleRef = useRef<boolean>(typeof document !== 'undefined' ? !document.hidden : true);
-  const targetFpsRef = useRef<number>(60);
   const particleLimitRef = useRef<number>(DEFAULT_PARTICLE_LIMIT);
   const projectileLimitRef = useRef<number>(DEFAULT_PROJECTILE_LIMIT);
   const sceneQualityScaleRef = useRef<number>(1);
@@ -454,7 +455,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const isMidEnd = !isLowEnd && (cores <= 8 || memory <= 8 || shortEdge <= 1080);
 
     if (isLowEnd) {
-      targetFpsRef.current = 45;
       particleLimitRef.current = 150;
       projectileLimitRef.current = 42;
       sceneQualityScaleRef.current = 0.5;
@@ -462,7 +462,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       return;
     }
     if (isMidEnd) {
-      targetFpsRef.current = 55;
       particleLimitRef.current = 180;
       projectileLimitRef.current = 50;
       sceneQualityScaleRef.current = 0.75;
@@ -470,7 +469,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       return;
     }
 
-    targetFpsRef.current = 60;
     particleLimitRef.current = DEFAULT_PARTICLE_LIMIT;
     projectileLimitRef.current = DEFAULT_PROJECTILE_LIMIT;
     sceneQualityScaleRef.current = 1;
@@ -1496,9 +1494,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     };
 
     let lastFrameTime = performance.now();
-    let physicsRemainderMs = 0;
     let worldCleanupTick = 0;
-    const frameInterval = () => 1000 / targetFpsRef.current;
+    const frameInterval = 1000 / TARGET_RENDER_FPS;
     const scheduleLoop = () => {
       if (
         disposed
@@ -1520,7 +1517,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
       isTabVisibleRef.current = true;
       lastFrameTime = performance.now();
-      physicsRemainderMs = 0;
       scheduleLoop();
     };
 
@@ -1532,14 +1528,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         return;
       }
       const deltaMs = now - lastFrameTime;
-      if (deltaMs < frameInterval()) {
+      if (deltaMs < frameInterval - FRAME_INTERVAL_TOLERANCE_MS) {
         scheduleLoop();
         return;
       }
+      const clampedDelta = Math.min(deltaMs, BASE_FRAME_MS * 2);
+      const dtScale = clampedDelta / BASE_FRAME_MS;
       lastFrameTime = now;
-      const fixedStep = consumeFixedSteps(physicsRemainderMs, deltaMs, BASE_FRAME_MS, 5);
-      physicsRemainderMs = fixedStep.remainderMs;
-      for (let step = 0; step < fixedStep.steps; step++) update(1);
+      update(dtScale);
       syncNpcChatAnchor();
       draw();
       scheduleLoop();
@@ -1704,11 +1700,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       if (p.isDashing) {
         p.vx = p.direction * DASH_SPEED;
       } else {
-        p.vx += horizontalInput * MANUAL_ACCEL * dtScale;
         const movementFriction = horizontalInput !== 0
           ? POWERED_MOVE_FRICTION
           : p.isGrounded ? GROUND_FRICTION : AIR_FRICTION;
-        p.vx *= movementFriction;
+        p.vx = applyDampedAcceleration(p.vx, horizontalInput, MANUAL_ACCEL, movementFriction, dtScale);
         p.vx = Math.max(-MAX_MANUAL_SPEED, Math.min(MAX_MANUAL_SPEED, p.vx));
         if (horizontalInput === 0 && Math.abs(p.vx) < 0.08) p.vx = 0;
       }
@@ -2032,10 +2027,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       const centerX = x + width / 2;
       const heightAboveGround = groundY - (y + height);
       const shadowScale = scaleOverride ?? (1 + Math.max(0, heightAboveGround) / 90);
-      const baseAlpha = Math.min(0.45 * alphaScale, 0.45) * (1 - Math.min(1, heightAboveGround / 180));
-      const shadowAlpha = enableBloom ? Math.min(0.35, baseAlpha * bloomStrength) : baseAlpha;
-      const shadowWidth = width * shadowScale * 0.9 * (enableBloom ? bloomStrength : 1);
-      const shadowHeight = Math.max(4, width * 0.3 * shadowScale * (enableBloom ? bloomStrength : 1));
+      const baseAlpha = Math.min(0.3 * alphaScale, 0.3) * (1 - Math.min(1, heightAboveGround / 180));
+      const shadowAlpha = enableBloom ? Math.min(0.24, baseAlpha * bloomStrength) : baseAlpha;
+      const shadowWidth = width * shadowScale * 0.72 * (enableBloom ? bloomStrength : 1);
+      const shadowHeight = Math.max(3, width * 0.22 * shadowScale * (enableBloom ? bloomStrength : 1));
 
       ctx.save();
       if (enableBloom && shadowAlpha > 0.08) {
@@ -2056,7 +2051,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           ctx.fill();
         }
       }
-      ctx.globalAlpha = Math.max(0.08, shadowAlpha * 0.85);
+      ctx.globalAlpha = Math.max(0.045, shadowAlpha * 0.78);
       ctx.fillStyle = '#000';
       ctx.beginPath();
       ctx.ellipse(centerX, groundY, shadowWidth / 2, shadowHeight / 2, 0, 0, Math.PI * 2);
