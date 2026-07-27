@@ -6,7 +6,7 @@ const fs = require('fs');
 const { URL } = require('url');
 
 const PORT = 3001;
-const API_SERVER = process.env.API_SERVER || 'https://cats.renchengzhang.com';
+const API_SERVER = process.env.API_SERVER || 'http://localhost:3000';
 const distDir = path.join(__dirname, '..', 'dist');
 const publicDir = path.join(__dirname, '..', 'public');
 
@@ -49,18 +49,21 @@ function proxyApi(req, res) {
   }
   cleanHeaders['host'] = targetUrl.hostname;
 
+  const transport = targetUrl.protocol === 'https:' ? https : http;
+  const defaultPort = targetUrl.protocol === 'https:' ? 443 : 80;
+
   const options = {
     hostname: targetUrl.hostname,
-    port: targetUrl.port || 443,
+    port: targetUrl.port || defaultPort,
     path: targetUrl.pathname + targetUrl.search,
     method: req.method,
     headers: cleanHeaders,
-    rejectUnauthorized: false,
+    ...(targetUrl.protocol === 'https:' ? { rejectUnauthorized: false } : {}),
   };
 
   console.log(`[proxy] ${req.method} ${targetUrl.pathname}`);
 
-  const proxy = https.request(options, (proxyRes) => {
+  const proxy = transport.request(options, (proxyRes) => {
     console.log(`[proxy] ← ${proxyRes.statusCode}`);
     // Strip hop-by-hop response headers
     const resHeaders = {};

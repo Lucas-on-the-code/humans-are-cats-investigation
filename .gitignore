@@ -34,3 +34,6 @@ wasm-core/Cargo.lock
 
 # Electron build output
 release/
+
+# Server distribution
+server-dist/

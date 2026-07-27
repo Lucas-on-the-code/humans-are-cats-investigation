@@ -23,7 +23,8 @@
     "serve": "node server.mjs",
     "electron:dev": "vite build --mode electron && electron .",
     "electron:build": "vite build --mode electron && electron-builder --dir",
-    "electron:dist": "vite build --mode electron && electron-builder"
+    "electron:dist": "vite build --mode electron && electron-builder",
+    "build:server": "node scripts/build-server.mjs"
   },
   "dependencies": {
     "@fontsource/space-mono": "^5.2.9",
