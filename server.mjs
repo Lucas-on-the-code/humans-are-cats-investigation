@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { createReadStream, existsSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, statSync, readFileSync } from 'node:fs';
 import { join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { handleMikuChatEndRequest, handleMikuChatRequest } from './server/deepseek-miku.mjs';
@@ -10,6 +10,23 @@ const root = fileURLToPath(new URL('.', import.meta.url));
 const distDir = join(root, 'dist');
 const port = Number(process.env.PORT || 3000);
 const host = process.env.HOST || '0.0.0.0';
+
+// ── Integrity manifest ──
+let integrityManifest = null;
+const integrityPath = join(distDir, 'integrity.json');
+try {
+  if (existsSync(integrityPath)) {
+    integrityManifest = JSON.parse(readFileSync(integrityPath, 'utf8'));
+    console.log(`[integrity] Loaded manifest v${integrityManifest.version}`);
+  } else {
+    console.warn('[integrity] No integrity.json found — build with `npm run build` to generate');
+  }
+} catch (err) {
+  console.warn('[integrity] Failed to load manifest:', err.message);
+}
+
+// Export for use by auth-leaderboard
+export const getIntegrityManifest = () => integrityManifest;
 
 // Fail-loud: the HMAC SECRET must be set in production. Without it, every restart
 // invalidates all sessions/runTokens and leaderboard submissions silently fail (F3).
@@ -64,6 +81,13 @@ createServer(async (req, res) => {
   }
   if (req.url?.startsWith('/api/leaderboard')) {
     await handleLeaderboardRequest(req, res);
+    return;
+  }
+  if (req.url === '/api/integrity' && req.method === 'GET') {
+    res.statusCode = integrityManifest ? 200 : 404;
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    res.end(JSON.stringify(integrityManifest || { error: 'NOT_FOUND' }));
     return;
   }
 

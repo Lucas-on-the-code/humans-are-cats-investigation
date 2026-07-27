@@ -1,9 +1,12 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { readFileSync, existsSync } from 'node:fs';
 import { createHmac, pbkdf2Sync, randomBytes, timingSafeEqual, createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const DATA_PATH = join(fileURLToPath(new URL('..', import.meta.url)), 'data/game-auth-db.json');
+const ROOT = fileURLToPath(new URL('..', import.meta.url));
+const INTEGRITY_PATH = join(ROOT, 'dist', 'integrity.json');
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
 const RUN_TTL_MS = 1000 * 60 * 60 * 2;
 const POW_DIFFICULTY = 4;
@@ -191,6 +194,9 @@ const normalizeSummary = (value) => ({
   bestCombo: Math.floor(Number(value?.bestCombo) || 0),
   survivalTime: Math.floor(Number(value?.survivalTime) || 0),
   title: String(value?.title || '见习调查员').slice(0, 24),
+  integrity: String(value?.integrity || ''),
+  codeHash: String(value?.codeHash || ''),
+  tamperFlags: Number(value?.tamperFlags) || 0,
 });
 
 const validateScore = (summary, runPayload) => {
@@ -202,7 +208,42 @@ const validateScore = (summary, runPayload) => {
   if (summary.distance > summary.survivalTime * 45 + 120) return 'DISTANCE_TOO_HIGH';
   if (summary.score > summary.survivalTime * 4200 + summary.distance * 90 + 60000) return 'SCORE_TOO_HIGH';
   if (summary.bestCombo > 999 || summary.evidence > 999 || summary.scans > 999) return 'STAT_TOO_HIGH';
+  // WASM integrity verification (from client-side anti-cheat module)
+  if (summary.integrity) {
+    const parts = String(summary.integrity).split('.');
+    if (parts.length !== 3) return 'INTEGRITY_MALFORMED';
+    const mutationCount = parseInt(parts[1], 16);
+    const minMutations = (Number(summary.scans) || 0) + (Number(summary.evidence) || 0) + (Number(summary.nearMisses) || 0);
+    if (!Number.isFinite(mutationCount) || mutationCount < minMutations) return 'INTEGRITY_FAIL';
+  }
+  // Code integrity: verify client code hash matches build manifest
+  if (summary.codeHash) {
+    const manifest = loadIntegrityManifest();
+    if (manifest && summary.codeHash !== manifest.version) {
+      return 'CODE_HASH_MISMATCH';
+    }
+  }
   return '';
+};
+
+// ── Build-time integrity manifest ──
+let cachedManifest = null;
+let manifestLoaded = false;
+
+const loadIntegrityManifest = () => {
+  if (manifestLoaded) return cachedManifest;
+  manifestLoaded = true;
+  try {
+    if (existsSync(INTEGRITY_PATH)) {
+      cachedManifest = JSON.parse(readFileSync(INTEGRITY_PATH, 'utf8'));
+      console.log(`[integrity] Loaded manifest v${cachedManifest.version}`);
+    } else {
+      console.warn('[integrity] No integrity.json found — code hash checks disabled');
+    }
+  } catch (err) {
+    console.warn('[integrity] Failed to load manifest:', err.message);
+  }
+  return cachedManifest;
 };
 
 // Flag scores that pass validateScore but sit near its ceiling. Accepted, logged for review.
@@ -467,6 +508,16 @@ export const handleLeaderboardRequest = async (req, res) => {
       if (runPayload.userId && runPayload.userId !== user.id) return writeJson(res, 403, { error: 'RUN_USER_MISMATCH' });
       const scoreError = validateScore(summary, runPayload);
       if (scoreError) return writeJson(res, 400, { error: scoreError });
+
+      // Tamper detection: log but don't reject (anti-debug can have false positives)
+      if (summary.tamperFlags > 0) {
+        console.warn('[anti-debug] Tampering suspected on submission:', {
+          user: user.id,
+          runId: runPayload.runId,
+          tamperFlags: summary.tamperFlags,
+          codeHash: summary.codeHash,
+        });
+      }
 
       // H3: re-read the latest DB under a mutex so concurrent submits can't
       // overwrite each other's new entry. runId replay is checked on the freshest data.

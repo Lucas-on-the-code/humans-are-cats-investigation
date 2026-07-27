@@ -29,25 +29,53 @@ function serveFile(res, filePath) {
   fs.createReadStream(filePath).pipe(res);
 }
 
+// Hop-by-hop headers that should NOT be forwarded
+const HOP_HEADERS = new Set([
+  'connection', 'keep-alive', 'proxy-connection',
+  'proxy-authenticate', 'proxy-authorization', 'te', 'trailer',
+  'transfer-encoding', 'upgrade',
+]);
+
 // Proxy API requests to the remote server
 function proxyApi(req, res) {
   const targetUrl = new URL(req.url, API_SERVER);
+  
+  // Build clean headers for the upstream request
+  const cleanHeaders = {};
+  for (const [key, value] of Object.entries(req.headers)) {
+    if (value && !HOP_HEADERS.has(key.toLowerCase())) {
+      cleanHeaders[key] = value;
+    }
+  }
+  cleanHeaders['host'] = targetUrl.hostname;
+
   const options = {
     hostname: targetUrl.hostname,
     port: targetUrl.port || 443,
     path: targetUrl.pathname + targetUrl.search,
     method: req.method,
-    headers: { ...req.headers, host: targetUrl.hostname },
+    headers: cleanHeaders,
     rejectUnauthorized: false,
   };
 
+  console.log(`[proxy] ${req.method} ${targetUrl.pathname}`);
+
   const proxy = https.request(options, (proxyRes) => {
-    res.writeHead(proxyRes.statusCode, proxyRes.headers);
+    console.log(`[proxy] ← ${proxyRes.statusCode}`);
+    // Strip hop-by-hop response headers
+    const resHeaders = {};
+    for (const [key, value] of Object.entries(proxyRes.headers)) {
+      if (value && !HOP_HEADERS.has(key.toLowerCase())) {
+        resHeaders[key] = value;
+      }
+    }
+    res.writeHead(proxyRes.statusCode, resHeaders);
     proxyRes.pipe(res);
   });
 
   proxy.on('error', (err) => {
-    res.writeHead(502);
+    console.error(`[proxy] ERROR: ${err.message}`);
+    res.writeHead(502, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify({ error: 'API_PROXY_ERROR', detail: err.message }));
   });
 

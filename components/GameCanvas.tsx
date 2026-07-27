@@ -37,6 +37,8 @@ import {
 } from '../types';
 import { gameAudio } from '../utils/audioSystem';
 import { applyDampedAcceleration, applySteppedGravity } from '../utils/frameRateMotion';
+import { checkFrameTiming } from '../utils/antiDebug';
+import initWasm, { GameState as WasmGameState } from '../public/wasm/game_state_core.js';
 
 interface GameCanvasProps {
   gameState: GameState;
@@ -393,6 +395,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const gameStateRef = useRef<GameState>(gameState);
   const keysRef = useRef<{ [key: string]: boolean }>({});
   const statsRef = useRef<RunStats>(emptyStats());
+  const wasmReadyRef = useRef(false);
+  const gameStateWasmRef = useRef<WasmGameState | null>(null);
   const nextChunkXRef = useRef(620);
   const leftAirWallXRef = useRef(RUN_START_X - 120);
   const chunkIndexRef = useRef(0);
@@ -426,6 +430,16 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   useEffect(() => {
     gameStateRef.current = gameState;
   }, [gameState]);
+
+  useEffect(() => {
+    let cancelled = false;
+    initWasm().then(() => {
+      if (!cancelled) wasmReadyRef.current = true;
+    }).catch((err: unknown) => {
+      console.warn('[wasm] Failed to init anti-cheat WASM module:', err);
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   const getAssetSize = (asset: DrawableAsset) => {
     return { width: asset.naturalWidth, height: asset.naturalHeight };
@@ -636,6 +650,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       direction: 1,
     };
     statsRef.current = emptyStats();
+    // Create fresh WASM anti-cheat state
+    if (wasmReadyRef.current) {
+      try {
+        gameStateWasmRef.current = new WasmGameState();
+      } catch (e) {
+        console.warn('[wasm] Failed to create GameState instance:', e);
+        gameStateWasmRef.current = null;
+      }
+    }
     platformsRef.current = [];
     hazardsRef.current = [];
     obstaclesRef.current = [];
@@ -773,6 +796,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   };
 
   const awardScore = (base: number, label: string | null, x: number, y: number, combo = true) => {
+    const gs = gameStateWasmRef.current;
+    if (gs) {
+      const score = combo ? gs.add_score(base) : base;
+      if (label) addFloatingText(`${label} +${Math.round(score)}`, x, y, combo ? '#ffe066' : '#9ee6ff', combo ? 18 : 15);
+      return;
+    }
+    // Fallback without WASM
     const stats = statsRef.current;
     const now = Date.now();
     if (combo) {
@@ -789,30 +819,37 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const endRun = () => {
     if (endedRef.current) return;
     endedRef.current = true;
-    const stats = statsRef.current;
-    const hasFreerideBonus = stats.taxiRides >= TAXI_FREERIDE_THRESHOLD;
-    const score = Math.floor(stats.score + (hasFreerideBonus ? TAXI_FREERIDE_BONUS : 0));
-    const title = hasFreerideBonus
-      ? t('title_taxi_king')
-      : stats.bestCombo >= 28
-        ? t('title_combo_frenzy')
-        : stats.nearMisses >= 8
-          ? t('title_graze_master')
-          : getDistanceMeters(stats.distance) >= 180
-            ? t('title_long_distance')
-            : stats.evidence >= 6
-              ? t('title_evidence_hunter')
-              : t('title_trainee');
+    const gs = gameStateWasmRef.current;
+    if (!gs) {
+      // fallback: use old stats path if WASM not available
+      const stats = statsRef.current;
+      onGameOver({
+        score: Math.floor(stats.score),
+        distance: getDistanceMeters(stats.distance),
+        evidence: stats.evidence,
+        scans: stats.scans,
+        nearMisses: stats.nearMisses,
+        bestCombo: stats.bestCombo,
+        survivalTime: Math.floor((Date.now() - stats.startedAt) / 1000),
+        title: t('title_trainee'),
+      });
+      return;
+    }
+    const summary = gs.finalize_run(BigInt(Date.now())) as RunSummary & { integrity?: string };
+    // Resolve title i18n keys to display text
+    const titleMap: Record<string, string> = {
+      taxi_king: t('title_taxi_king'),
+      combo_frenzy: t('title_combo_frenzy'),
+      graze_master: t('title_graze_master'),
+      long_distance: t('title_long_distance'),
+      evidence_hunter: t('title_evidence_hunter'),
+      trainee: t('title_trainee'),
+    };
     onGameOver({
-      score,
-      distance: getDistanceMeters(stats.distance),
-      evidence: stats.evidence,
-      scans: stats.scans,
-      nearMisses: stats.nearMisses,
-      bestCombo: stats.bestCombo,
-      survivalTime: Math.floor((Date.now() - stats.startedAt) / 1000),
-      title,
-    });
+      ...summary,
+      title: titleMap[summary.title] || t('title_trainee'),
+      integrity: summary.integrity,
+    } as RunSummary & { integrity?: string });
   };
 
   const makeNpc = (x: number, y: number, overrides: Partial<NPC> = {}): NPC => ({
@@ -1397,25 +1434,31 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       const p = playerRef.current;
       if (deathAnimRef.current.active) return;
       if (p.invulnerableTime > 0 || p.isDashing) return;
-      if (p.shieldTime > 0) {
+      const gs = gameStateWasmRef.current;
+      if (gs ? gs.shield_active() : p.shieldTime > 0) {
+        if (gs) gs.deactivate_shield();
         p.shieldTime = 0;
         screenShakeRef.current = 6;
         addFloatingText(t('float_shield'), p.x, p.y - 20, '#66f2c2', 18);
         playSound('DASH');
         return;
       }
-      p.hp = Math.max(0, p.hp - amount);
-      p.panic = Math.min(100, p.panic + 25);
+      const died = gs ? gs.apply_damage(amount) : false;
+      // Sync player fields from WASM for rendering
+      if (gs) {
+        p.panic = gs.panic();
+      } else {
+        p.hp = Math.max(0, p.hp - amount);
+        p.panic = Math.min(100, p.panic + 25);
+      }
       p.invulnerableTime = PLAYER_DAMAGE_INVULN;
       p.vy = Math.min(p.vy, -5);
-      statsRef.current.combo = 0;
-      statsRef.current.multiplier = 1;
       screenShakeRef.current = 12;
       emitParticles(p.x + p.width / 2, p.y + p.height / 2, '#ff3355', 14, 7);
       if (sourceX < p.x) p.x += 18;
-      if (p.hp <= 0) {
+      if (died || (!gs && p.hp <= 0)) {
         deathAnimRef.current = { active: true, startedAt: Date.now() };
-        p.hp = 0;
+        if (!gs) p.hp = 0;
         p.vx = sourceX < p.x ? 2.6 : -2.6;
         p.vy = DEATH_POP_VY;
         p.isDashing = false;
@@ -1434,10 +1477,16 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const collectItem = (it: Item) => {
       if (it.collected) return;
       const p = playerRef.current;
+      const gs = gameStateWasmRef.current;
       it.collected = true;
       if (it.type === 'HEALTH') {
         playSound('COLLECT');
-        p.hp = Math.min(p.maxHp, p.hp + COMBAT.HEALTH_PACK_HEAL);
+        if (gs) {
+          gs.apply_heal(COMBAT.HEALTH_PACK_HEAL);
+          p.hp = gs.hp();
+        } else {
+          p.hp = Math.min(p.maxHp, p.hp + COMBAT.HEALTH_PACK_HEAL);
+        }
         addFloatingText(t('float_heal'), it.x, it.y, '#66f2c2', 16);
         emitParticles(it.x + 15, it.y + 15, '#66f2c2', 10, 5);
         return;
@@ -1452,15 +1501,22 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       if (it.type === 'SHIELD') {
         playSound('COLLECT');
         p.shieldTime = BOOST_TIME;
+        if (gs) gs.activate_shield();
         awardScore(180, t('float_shield'), it.x, it.y);
         emitParticles(it.x + 15, it.y + 15, '#66f2c2', 12, 6);
         return;
       }
       if (it.type === 'EVIDENCE') {
         playSound('COLLECT');
-        statsRef.current.evidence++;
-        p.evidenceCollected = statsRef.current.evidence;
-        awardScore(1000, t('float_data'), it.x, it.y);
+        if (gs) {
+          const scoreAdded = gs.collect_evidence();
+          p.evidenceCollected = gs.evidence();
+          addFloatingText(`${t('float_data')} +${Math.round(scoreAdded)}`, it.x, it.y, '#FFD700', 18);
+        } else {
+          statsRef.current.evidence++;
+          p.evidenceCollected = statsRef.current.evidence;
+          awardScore(1000, t('float_data'), it.x, it.y);
+        }
         emitParticles(it.x + 15, it.y + 15, '#FFD700', 16, 7);
         return;
       }
@@ -1545,10 +1601,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       if (endedRef.current) return;
       const p = playerRef.current;
       const stats = statsRef.current;
+      const gs = gameStateWasmRef.current;
       const keys = keysRef.current;
       const touch = touchInputRef.current;
       const virtualWidth = getVirtualWidth(dims.width, dims.height);
       const now = Date.now();
+
+      checkFrameTiming(now);
 
       if (introDropRef.current.phase !== 'done') {
         ensureGenerated(virtualWidth);
@@ -1654,7 +1713,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       else if (p.isDashing) p.isDashing = false;
       if (p.invulnerableTime > 0) p.invulnerableTime = Math.max(0, p.invulnerableTime - 16 * dtScale);
       if (p.magnetTime > 0) p.magnetTime = Math.max(0, p.magnetTime - 16 * dtScale);
-      if (p.shieldTime > 0) p.shieldTime = Math.max(0, p.shieldTime - 16 * dtScale);
+      if (p.shieldTime > 0) {
+        p.shieldTime = Math.max(0, p.shieldTime - 16 * dtScale);
+        if (p.shieldTime <= 0 && gs) gs.deactivate_shield();
+      }
       p.slideTime = 0;
       p.isSliding = slidePressed && p.isGrounded;
       const prevY = p.y;
@@ -1779,6 +1841,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         p.isSliding = false;
         p.isDashing = false;
         stats.taxiRides++;
+        if (gs) gs.record_taxi_ride();
         const taxiText = stats.taxiRides >= TAXI_FREERIDE_THRESHOLD
           ? t('float_taxi_free')
           : t('float_taxi_board_progress', { count: stats.taxiRides, threshold: TAXI_FREERIDE_THRESHOLD });
@@ -1838,13 +1901,18 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
 
       const previousDistance = stats.distance;
-      stats.distance = Math.max(stats.distance, p.x - RUN_START_X);
-      if (stats.distance > previousDistance) {
-        stats.score += ((stats.distance - previousDistance) / PIXELS_PER_METER) * (18 + heat * 20);
-      }
-      if (stats.combo > 0 && now - stats.lastComboAt > COMBO_WINDOW_MS) {
-        stats.combo = 0;
-        stats.multiplier = 1;
+      if (gs) {
+        stats.distance = gs.update_distance(p.x);
+        gs.check_combo_timeout(BigInt(now));
+      } else {
+        stats.distance = Math.max(stats.distance, p.x - RUN_START_X);
+        if (stats.distance > previousDistance) {
+          stats.score += ((stats.distance - previousDistance) / PIXELS_PER_METER) * (18 + heat * 20);
+        }
+        if (stats.combo > 0 && now - stats.lastComboAt > COMBO_WINDOW_MS) {
+          stats.combo = 0;
+          stats.multiplier = 1;
+        }
       }
 
       if (p.attackCooldown > 0) p.attackCooldown = Math.max(0, p.attackCooldown - 16 * dtScale);
@@ -1868,8 +1936,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         if (!obstacle.passed && p.x > obstacle.x + obstacle.width) {
           obstacle.passed = true;
           if (Math.abs(hitbox.y + hitbox.height - (obstacle.y + obstacle.height)) < 70) {
-            stats.nearMisses++;
-            awardScore(180, t('float_near'), obstacle.x, obstacle.y - 12);
+            if (gs) {
+              const added = gs.record_near_miss();
+              addFloatingText(`${t('float_near')} +${Math.round(added)}`, obstacle.x, obstacle.y - 12, '#ffe066', 18);
+            } else {
+              stats.nearMisses++;
+              awardScore(180, t('float_near'), obstacle.x, obstacle.y - 12);
+            }
           }
         }
         if (rectsOverlap(hitbox, obstacle)) {
@@ -1882,8 +1955,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         if (!hazard.passed && p.x > hazard.x + hazard.width) {
           hazard.passed = true;
           if (hitbox.y + hitbox.height > hazard.y - 46) {
-            stats.nearMisses++;
-            awardScore(220, t('float_near'), hazard.x, hazard.y - 10);
+            if (gs) {
+              const added = gs.record_near_miss();
+              addFloatingText(`${t('float_near')} +${Math.round(added)}`, hazard.x, hazard.y - 10, '#ffe066', 18);
+            } else {
+              stats.nearMisses++;
+              awardScore(220, t('float_near'), hazard.x, hazard.y - 10);
+            }
           }
         }
         if (isHazardActive(hazard, now) && rectsOverlap(hitbox, hazard)) {
@@ -1909,7 +1987,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           const canSeePlayer = !activeRide && forwardDistance > -15 && forwardDistance < n.visionRange && verticalDistance < n.visionHeight / 2 && !p.isDashing;
           if (canSeePlayer) {
             n.alertLevel = Math.min(100, n.alertLevel + (1.35 + heat * 0.8) * dtScale);
-            p.panic = Math.min(100, p.panic + 0.9 * dtScale);
+            if (gs) {
+              gs.add_panic(0.9 * dtScale);
+              p.panic = gs.panic();
+            } else {
+              p.panic = Math.min(100, p.panic + 0.9 * dtScale);
+            }
             if (n.alertLevel >= 58 && n.damageCooldown <= 0) {
               damagePlayer(COMBAT.ALERT_DAMAGE, n.x + n.width / 2);
               n.damageCooldown = NPC_PULSE_COOLDOWN;
@@ -1920,7 +2003,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           if (!n.chatKind && !activeRide && rectsOverlap(hitbox, n)) damagePlayer(COMBAT.CONTACT_DAMAGE, n.x + n.width / 2);
         }
       });
-      p.panic = Math.max(0, p.panic - 0.35 * dtScale);
+      if (gs) {
+        gs.decay_panic(dtScale);
+        p.panic = gs.panic();
+      } else {
+        p.panic = Math.max(0, p.panic - 0.35 * dtScale);
+      }
 
       pedestriansRef.current.forEach((ped) => {
         ped.x += ped.vx * dtScale;
@@ -1949,8 +2037,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             if (n.scanHits >= n.maxScanHits) {
               n.scanned = true;
               n.alertLevel = 0;
-              stats.scans++;
-              awardScore(n.isTarget ? 700 : 240, n.isTarget ? t('float_scan_target') : t('float_scan'), n.x, n.y - 8);
+              if (gs) {
+                const added = gs.record_scan(n.isTarget);
+                addFloatingText(`${n.isTarget ? t('float_scan_target') : t('float_scan')} +${Math.round(added)}`, n.x, n.y - 8, '#ffe066', 18);
+              } else {
+                stats.scans++;
+                awardScore(n.isTarget ? 700 : 240, n.isTarget ? t('float_scan_target') : t('float_scan'), n.x, n.y - 8);
+              }
               if (n.isTarget) addPickup(n.x + n.width / 2 - 15, n.y + 10, 'EVIDENCE');
             } else {
               n.alertLevel = Math.min(100, n.alertLevel + 24);
@@ -2493,6 +2586,21 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       ctx.restore();
 
       const stats = statsRef.current;
+      const gsHud = gameStateWasmRef.current;
+      const hudScore = gsHud ? Math.floor(gsHud.score()) : Math.floor(stats.score);
+      const hudDistance = gsHud ? gsHud.update_distance(pl.x) : stats.distance;
+      const hudEvidence = gsHud ? gsHud.evidence() : stats.evidence;
+      const hudNearMisses = gsHud ? gsHud.near_misses() : stats.nearMisses;
+      const hudCombo = gsHud ? gsHud.combo() : stats.combo;
+      const hudMultiplier = gsHud ? gsHud.multiplier() : stats.multiplier;
+      const hudHp = gsHud ? gsHud.hp() : pl.hp;
+      const hudMaxHp = gsHud ? gsHud.max_hp() : pl.maxHp;
+      // Sync player fields for other code that reads them
+      if (gsHud) {
+        pl.hp = gsHud.hp();
+        pl.panic = gsHud.panic();
+        pl.evidenceCollected = gsHud.evidence();
+      }
       ctx.textAlign = 'left';
       const hudX = 24;
       const hudY = 24;
@@ -2526,27 +2634,27 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
       ctx.fillStyle = '#FFD700';
       ctx.font = 'bold 28px "Space Mono", monospace';
-      ctx.fillText(`${Math.floor(stats.score).toLocaleString()}`, 44, 62);
+      ctx.fillText(`${hudScore.toLocaleString()}`, 44, 62);
       ctx.restore();
       ctx.fillStyle = '#dbeafe';
       ctx.font = 'bold 12px "Space Mono", monospace';
-      ctx.fillText(`${t('hud_distance')} ${getDistanceMeters(stats.distance)}m`, 44, 86);
-      ctx.fillText(`${t('hud_data')} ${stats.evidence}`, 164, 86);
-      ctx.fillText(`${t('hud_near')} ${stats.nearMisses}`, 254, 86);
+      ctx.fillText(`${t('hud_distance')} ${getDistanceMeters(hudDistance)}m`, 44, 86);
+      ctx.fillText(`${t('hud_data')} ${hudEvidence}`, 164, 86);
+      ctx.fillText(`${t('hud_near')} ${hudNearMisses}`, 254, 86);
       ctx.fillStyle = 'rgba(255,255,255,0.11)';
       ctx.fillRect(44, 106, 232, 12);
-      ctx.fillStyle = pl.hp < 35 ? '#ff3355' : COLORS.hpBarPlayer;
-      ctx.fillRect(44, 106, 232 * (pl.hp / pl.maxHp), 12);
+      ctx.fillStyle = hudHp < 35 ? '#ff3355' : COLORS.hpBarPlayer;
+      ctx.fillRect(44, 106, 232 * (hudHp / hudMaxHp), 12);
       ctx.fillStyle = '#dbeafe';
-      ctx.fillText(`${t('hud_hp')} ${Math.ceil(pl.hp)}/${pl.maxHp}`, 44, 101);
+      ctx.fillText(`${t('hud_hp')} ${Math.ceil(hudHp)}/${hudMaxHp}`, 44, 101);
       ctx.fillStyle = 'rgba(255,255,255,0.11)';
       ctx.fillRect(44, 136, 232, 8);
-      const comboRemain = stats.combo > 0 ? Math.max(0, 1 - (Date.now() - stats.lastComboAt) / COMBO_WINDOW_MS) : 0;
+      const comboRemain = hudCombo > 0 ? Math.max(0, 1 - (Date.now() - stats.lastComboAt) / COMBO_WINDOW_MS) : 0;
       ctx.fillStyle = '#ffb703';
       ctx.fillRect(44, 136, 232 * comboRemain, 8);
-      ctx.fillStyle = stats.combo > 0 ? '#ffb703' : '#64748b';
+      ctx.fillStyle = hudCombo > 0 ? '#ffb703' : '#64748b';
       ctx.font = 'bold 16px "Space Mono", monospace';
-      ctx.fillText(`${t('hud_combo')} x${stats.combo}  ${t('hud_mult')} ${stats.multiplier.toFixed(2)}`, 44, 166);
+      ctx.fillText(`${t('hud_combo')} x${hudCombo}  ${t('hud_mult')} ${hudMultiplier.toFixed(2)}`, 44, 166);
       if (pl.shieldTime > 0 || pl.magnetTime > 0) {
         ctx.fillStyle = '#66f2c2';
         ctx.font = 'bold 12px "Space Mono", monospace';
