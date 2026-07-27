@@ -30,98 +30,123 @@ if (existsSync(envPath)) {
       if (!process.env[key]) { process.env[key] = value; loaded.push(key); }
     }
   }
-  console.log(`[env] Loaded .env (keys: ${loaded.join(', ') || 'none'})`);
+  console.log('[env] Loaded .env (keys: ' + (loaded.join(', ') || 'none') + ')');
 }
 
 // Integrity manifest
 let integrityManifest = null;
-const integrityPath = join(distDir, 'integrity.json');
 try {
-  if (existsSync(integrityPath)) {
-    integrityManifest = JSON.parse(readFileSync(integrityPath, 'utf8'));
-    console.log(`[integrity] Loaded manifest v${integrityManifest.version}`);
-  } else {
-    console.warn('[integrity] No integrity.json found');
+  const ip = join(distDir, 'integrity.json');
+  if (existsSync(ip)) {
+    integrityManifest = JSON.parse(readFileSync(ip, 'utf8'));
+    console.log('[integrity] Loaded manifest v' + integrityManifest.version);
   }
 } catch (err) {
-  console.warn('[integrity] Failed to load manifest:', err.message);
+  console.warn('[integrity] ' + err.message);
 }
 
 export const getIntegrityManifest = () => integrityManifest;
 
 if (!process.env.GAME_SERVER_SECRET || process.env.GAME_SERVER_SECRET.length < 32) {
   console.error('FATAL: GAME_SERVER_SECRET must be >= 32 chars.');
-  console.error('Create .env with: GAME_SERVER_SECRET=<your-key>');
-  console.error('Generate: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"');
+  console.error('Run genkey.cjs to generate one, or create .env with GAME_SERVER_SECRET=<key>');
   process.exit(1);
 }
 
-const mimeTypes = {
+const MIME = {
   '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.png': 'image/png',
-  '.mp3': 'audio/mpeg',
+  '.js':   'text/javascript; charset=utf-8',
+  '.mjs':  'text/javascript; charset=utf-8',
+  '.css':  'text/css; charset=utf-8',
+  '.png':  'image/png',
+  '.mp3':  'audio/mpeg',
   '.json': 'application/json; charset=utf-8',
+  '.wasm': 'application/wasm',
+  '.woff': 'font/woff',
+  '.woff2':'font/woff2',
+  '.ico':  'image/x-icon',
+};
+const mimeOf = (p) => MIME[p.slice(p.lastIndexOf('.')).toLowerCase()] || 'application/octet-stream';
+
+const writeJson = (res, status, payload) => {
+  res.statusCode = status;
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.end(JSON.stringify(payload));
 };
 
-const contentTypeFor = (filePath) => {
-  const ext = filePath.slice(filePath.lastIndexOf('.'));
-  return mimeTypes[ext] || 'application/octet-stream';
-};
+// Safe static file server — never throws
+function tryServeStatic(res, filePath) {
+  try {
+    if (!existsSync(filePath)) return false;
+    const st = statSync(filePath);
+    if (!st.isFile()) return false;
+    res.statusCode = 200;
+    res.setHeader('Content-Type', mimeOf(filePath));
+    res.setHeader('Content-Length', String(st.size));
+    const stream = createReadStream(filePath);
+    stream.on('error', function(e) {
+      if (!res.headersSent) writeJson(res, 500, { error: 'STREAM_ERROR', detail: e.message });
+    });
+    stream.pipe(res);
+    return true;
+  } catch (err) {
+    console.warn('[static] ' + filePath + ': ' + err.message);
+    return false;
+  }
+}
 
 import { createServer } from 'node:http';
 
-createServer(async (req, res) => {
-  if (req.url?.startsWith('/api/miku-chat/end'))    { await handleMikuChatEndRequest(req, res); return; }
-  if (req.url?.startsWith('/api/miku-chat'))         { await handleMikuChatRequest(req, res); return; }
-  if (req.url?.startsWith('/api/vocaloid-search'))   { await handleVocaloidSearchRequest(req, res); return; }
-  if (req.url?.startsWith('/api/vocaloid-lyrics'))   { await handleVocaloidLyricsRequest(req, res); return; }
-  if (req.url?.startsWith('/api/miku-memory'))       { await handleMikuMemoryRequest(req, res); return; }
-  if (req.url?.startsWith('/api/auth'))              { await handleAuthRequest(req, res); return; }
-  if (req.url?.startsWith('/api/runs/start'))        { await handleRunStartRequest(req, res); return; }
-  if (req.url?.startsWith('/api/leaderboard'))       { await handleLeaderboardRequest(req, res); return; }
-  if (req.url === '/api/integrity' && req.method === 'GET') {
-    res.statusCode = integrityManifest ? 200 : 404;
-    res.setHeader('Content-Type', 'application/json; charset=utf-8');
-    res.end(JSON.stringify(integrityManifest || { error: 'NOT_FOUND' }));
-    return;
-  }
-
-  const urlPath = decodeURIComponent((req.url || '/').split('?')[0]);
-  const safePath = normalize(urlPath).replace(/^(\.\.[/\\])+/, '');
-  let filePath = join(distDir, safePath === '/' ? 'index.html' : safePath);
-  if (!filePath.startsWith(distDir) || !existsSync(filePath) || statSync(filePath).isDirectory()) {
-    filePath = join(distDir, 'index.html');
-  }
-
-  const fileStat = statSync(filePath);
-  res.setHeader('Content-Type', contentTypeFor(filePath));
-  res.setHeader('Accept-Ranges', 'bytes');
-
-  const range = req.headers.range;
-  if (range) {
-    const match = /^bytes=(\d*)-(\d*)$/.exec(range);
-    if (match) {
-      const start = match[1] ? Number(match[1]) : 0;
-      const end = match[2] ? Number(match[2]) : fileStat.size - 1;
-      if (Number.isInteger(start) && Number.isInteger(end) && start <= end && start >= 0 && end < fileStat.size) {
-        res.statusCode = 206;
-        res.setHeader('Content-Range', `bytes ${start}-${end}/${fileStat.size}`);
-        res.setHeader('Content-Length', String(end - start + 1));
-        createReadStream(filePath, { start, end }).pipe(res);
-        return;
-      }
+const server = createServer(async function(req, res) {
+  try {
+    const url = req.url || '/';
+    if (url.startsWith('/api/miku-chat/end'))    { await handleMikuChatEndRequest(req, res); return; }
+    if (url.startsWith('/api/miku-chat'))         { await handleMikuChatRequest(req, res); return; }
+    if (url.startsWith('/api/vocaloid-search'))   { await handleVocaloidSearchRequest(req, res); return; }
+    if (url.startsWith('/api/vocaloid-lyrics'))   { await handleVocaloidLyricsRequest(req, res); return; }
+    if (url.startsWith('/api/miku-memory'))       { await handleMikuMemoryRequest(req, res); return; }
+    if (url.startsWith('/api/auth'))              { await handleAuthRequest(req, res); return; }
+    if (url.startsWith('/api/runs/start'))        { await handleRunStartRequest(req, res); return; }
+    if (url.startsWith('/api/leaderboard'))       { await handleLeaderboardRequest(req, res); return; }
+    if (url === '/api/integrity' && req.method === 'GET') {
+      return writeJson(res, integrityManifest ? 200 : 404, integrityManifest || { error: 'NOT_FOUND' });
     }
-    res.statusCode = 416;
-    res.setHeader('Content-Range', `bytes */${fileStat.size}`);
-    res.end();
-    return;
-  }
+    if (url === '/health') {
+      return writeJson(res, 200, { status: 'ok', uptime: Math.floor(process.uptime()) });
+    }
 
-  res.statusCode = 200;
-  res.setHeader('Content-Length', String(fileStat.size));
-  createReadStream(filePath).pipe(res);
-}).listen(port, host, () => {
-  console.log(`Server listening on http://${host}:${port}`);
+    // Static files
+    const urlPath = decodeURIComponent(url.split('?')[0]);
+    const safe = normalize(urlPath).replace(/^(\.\.[/\\])+/, '');
+    let fp = join(distDir, safe === '/' ? 'index.html' : safe);
+    if (!fp.startsWith(distDir)) { writeJson(res, 403, { error: 'FORBIDDEN' }); return; }
+
+    if (tryServeStatic(res, fp)) return;
+    tryServeStatic(res, join(distDir, 'index.html'));
+
+    // Nothing served — show API info
+    if (!res.headersSent) {
+      writeJson(res, 200, {
+        name: 'Humans are Cats: Investigation - Server',
+        endpoints: ['/api/auth', '/api/leaderboard', '/api/runs/start', '/api/miku-chat', '/health'],
+      });
+    }
+  } catch (err) {
+    console.error('[server] Unhandled error:', err.message);
+    if (!res.headersSent) writeJson(res, 500, { error: 'INTERNAL_ERROR' });
+  }
+});
+
+server.on('error', function(err) {
+  if (err.code === 'EADDRINUSE') {
+    console.error('Port ' + port + ' is already in use.');
+    console.error('Stop the other process or use: set PORT=3001 && node server.mjs');
+  } else {
+    console.error('Server error: ' + err.message);
+  }
+  process.exit(1);
+});
+
+server.listen(port, host, function() {
+  console.log('Server listening on http://' + host + ':' + port);
 });
