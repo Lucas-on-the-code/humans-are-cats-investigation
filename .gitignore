@@ -26,3 +26,11 @@ dist-ssr
 *.sln
 *.sw?
 .gstack/
+
+# Rust / WASM
+wasm-core/target/
+wasm-core/pkg/
+wasm-core/Cargo.lock
+
+# Electron build output
+release/

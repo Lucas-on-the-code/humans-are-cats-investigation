@@ -5,6 +5,9 @@ import { DialogBox } from './components/DialogBox';
 import { GameState, LeaderboardEntry, NpcChatSession, RunSummary, TouchInput } from './types';
 import { LYRICS, IDLE_SPRITE_URLS } from './constants';
 import { gameAudio } from './utils/audioSystem';
+import { initCodeIntegrity, getCodeHash } from './utils/codeIntegrity';
+import { startAntiDebug, stopAntiDebug, getTamperFlags } from './utils/antiDebug';
+import { apiUrl } from './utils/apiBase';
 import { useTranslation } from 'react-i18next';
 import './i18n';
 import {
@@ -1208,6 +1211,12 @@ const App: React.FC = () => {
     document.documentElement.lang = currentLang;
   }, [currentLang]);
 
+  useEffect(() => {
+    void initCodeIntegrity();
+    startAntiDebug();
+    return () => stopAntiDebug();
+  }, []);
+
   const authHeaders = (extra: Record<string, string> = {}) => ({
     ...extra,
     ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
@@ -1215,7 +1224,7 @@ const App: React.FC = () => {
 
   const fetchGlobalLeaderboard = useCallback(async () => {
     try {
-      const res = await fetch('/api/leaderboard', { headers: authHeaders() });
+      const res = await fetch(apiUrl('/api/leaderboard'), { headers: authHeaders() });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json() as { entries?: GlobalLeaderboardEntry[]; viewerBest?: GlobalLeaderboardEntry | null };
       setGlobalLeaderboard(Array.isArray(data.entries) ? data.entries.slice(0, 50) : []);
@@ -1248,7 +1257,7 @@ const App: React.FC = () => {
     let cancelled = false;
     const loadMe = async () => {
       try {
-        const res = await fetch('/api/auth/me', { headers: authHeaders() });
+        const res = await fetch(apiUrl('/api/auth/me'), { headers: authHeaders() });
         const data = await res.json() as { user?: AuthUser | null };
         if (cancelled) return;
         if (res.ok && data.user) setAuthUser(data.user);
@@ -1320,14 +1329,14 @@ const App: React.FC = () => {
     try {
       let pow: { nonce: string; answer: string } | undefined;
       if (authMode === 'register') {
-        const challengeRes = await fetch('/api/auth/challenge', { method: 'POST' });
+        const challengeRes = await fetch(apiUrl('/api/auth/challenge'), { method: 'POST' });
         const challenge = await challengeRes.json() as { nonce: string; difficulty: number; error?: string };
         if (!challengeRes.ok) throw new Error(challenge.error || 'CHALLENGE_FAILED');
         const answer = await solvePow(challenge.nonce, challenge.difficulty);
         pow = { nonce: challenge.nonce, answer };
       }
 
-      const res = await fetch(`/api/auth/${authMode}`, {
+      const res = await fetch(apiUrl(`/api/auth/${authMode}`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: authUsername, password: authPassword, pow }),
@@ -1355,7 +1364,7 @@ const App: React.FC = () => {
   };
 
   const logout = async () => {
-    if (authToken) void fetch('/api/auth/logout', { method: 'POST', headers: authHeaders() }).catch(() => {});
+    if (authToken) void fetch(apiUrl('/api/auth/logout'), { method: 'POST', headers: authHeaders() }).catch(() => {});
     setAuthToken(null);
     setAuthUser(null);
     setViewerLeaderboardEntry(null);
@@ -1368,7 +1377,7 @@ const App: React.FC = () => {
   };
 
   const recordRun = (summary: RunSummary) => {
-    setLastRunSummary(summary);
+    setLastRunSummary({ ...summary, codeHash: getCodeHash(), tamperFlags: getTamperFlags() });
   };
 
   const submitGlobalScore = async (tokenOverride?: string) => {
@@ -1382,7 +1391,7 @@ const App: React.FC = () => {
     setUploadAttemptedRunToken(currentRunToken);
     setAuthMessage(t('uploading_score'));
     try {
-      const res = await fetch('/api/leaderboard/submit', {
+      const res = await fetch(apiUrl('/api/leaderboard/submit'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1506,7 +1515,7 @@ const App: React.FC = () => {
     gameAudio.stopMusic({ reset: true });
     setGameState('PLAYING');
     setDialogLines([]);
-    void fetch('/api/runs/start', { method: 'POST', headers: authHeaders() })
+    void fetch(apiUrl('/api/runs/start'), { method: 'POST', headers: authHeaders() })
       .then((res) => res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`)))
       .then((data: { runToken?: string }) => {
         if (data.runToken) setCurrentRunToken(data.runToken);
@@ -1521,7 +1530,7 @@ const App: React.FC = () => {
     const prepared = prepareMikuMemoryEndRequest(chat.messages, chat.memoryScope);
     if (!prepared) return;
 
-    void fetch('/api/miku-chat/end', {
+    void fetch(apiUrl('/api/miku-chat/end'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(prepared.request),
@@ -1615,7 +1624,7 @@ const App: React.FC = () => {
     const cached = lyricCacheKeysForSong(song).map((key) => lyricCacheRef.current.get(key)).find(Boolean);
     if (cached && (!options.includeFullLyrics || hasFullLyricContext(cached))) return cached;
     try {
-      const res = await fetch('/api/vocaloid-lyrics', {
+      const res = await fetch(apiUrl('/api/vocaloid-lyrics'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query: [song.name, song.additionalNames, song.artistString].filter(Boolean).join(' '), song, includeFullLyrics: Boolean(options.includeFullLyrics) }),
@@ -1697,7 +1706,7 @@ const App: React.FC = () => {
         continue;
       }
       try {
-        const res = await fetch('/api/vocaloid-lyrics', {
+        const res = await fetch(apiUrl('/api/vocaloid-lyrics'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ query, includeFullLyrics: Boolean(options.includeFullLyrics) }),
@@ -1736,7 +1745,7 @@ const App: React.FC = () => {
       const initialLyricContexts = (wantsLyricsNow || isSongDiscussion) ? lyricsForLookups(passiveLookups) : [];
       const memoryScope = activeNpcChat.memoryScope ?? mikuMemoryScopeForAccount(authUser?.id);
       const memoryBrief = buildMikuMemoryBrief(memoryScope);
-      const res = await fetch('/api/miku-chat', {
+      const res = await fetch(apiUrl('/api/miku-chat'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: nextMessages, passiveVocaloidLookups: passiveLookups, lyricContexts: initialLyricContexts, memoryBrief }),
@@ -1746,7 +1755,7 @@ const App: React.FC = () => {
       if (data.action === 'memory_search' && Array.isArray(data.queries) && data.queries.length > 0) {
         const memorySearchResults = data.queries.flatMap((query) => searchMikuTopicMemory(query, memoryScope));
         const uniqueMemorySearchResults = [...new Map(memorySearchResults.map((result) => [`${result.sessionId}:${result.topicId}`, result])).values()].slice(0, 3);
-        const finalRes = await fetch('/api/miku-chat', {
+        const finalRes = await fetch(apiUrl('/api/miku-chat'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ messages: nextMessages, passiveVocaloidLookups: passiveLookups, lyricContexts: initialLyricContexts, memoryBrief, memorySearchResults: uniqueMemorySearchResults }),
@@ -1761,7 +1770,7 @@ const App: React.FC = () => {
         const combinedLookups = mergeLookupLists(lookups, passiveLookups, getRecentSongLookups(currentSongTurn));
         await prefetchLyricsForLookups(combinedLookups);
         const lyricContexts = (wantsLyricsNow || isSongDiscussion) ? lyricsForLookups(combinedLookups) : [];
-        const finalRes = await fetch('/api/miku-chat', {
+        const finalRes = await fetch(apiUrl('/api/miku-chat'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ messages: nextMessages, vocaloidLookups: lookups, passiveVocaloidLookups: combinedLookups, lyricContexts, memoryBrief }),
@@ -1772,7 +1781,7 @@ const App: React.FC = () => {
         else throw new Error(finalData.error || 'EMPTY_REPLY');
       } else if ((data.action === 'vocaloid_lyrics' || data.action === 'vocaloid_full_lyrics') && Array.isArray(data.queries) && data.queries.length > 0) {
         const lyricContexts = await fetchLyricsForQueries(data.queries, passiveLookups, { includeFullLyrics: data.action === 'vocaloid_full_lyrics' });
-        const finalRes = await fetch('/api/miku-chat', {
+        const finalRes = await fetch(apiUrl('/api/miku-chat'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ messages: nextMessages, passiveVocaloidLookups: passiveLookups, lyricContexts, memoryBrief }),
