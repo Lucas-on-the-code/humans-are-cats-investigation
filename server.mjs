@@ -14,10 +14,8 @@ const host = process.env.HOST || '0.0.0.0';
 const envPath = join(root, '.env');
 if (existsSync(envPath)) {
   let raw = readFileSync(envPath, 'utf8');
-  if (raw.charCodeAt(0) === 0xFEFF) raw = raw.slice(1); // strip BOM
-  const lines = raw.split(/
-?
-/);
+  if (raw.charCodeAt(0) === 0xFEFF) raw = raw.slice(1);
+  const lines = raw.includes('\r') ? raw.split('\r\n') : raw.split('\n');
   const loaded = [];
   for (const line of lines) {
     const trimmed = line.trim();
@@ -32,7 +30,7 @@ if (existsSync(envPath)) {
       if (!process.env[key]) { process.env[key] = value; loaded.push(key); }
     }
   }
-  console.log(`[env] Loaded .env file (keys: ${loaded.join(', ') || 'none'})`);
+  console.log(`[env] Loaded .env (keys: ${loaded.join(', ') || 'none'})`);
 }
 
 // Integrity manifest
@@ -51,12 +49,10 @@ try {
 
 export const getIntegrityManifest = () => integrityManifest;
 
-// Fail-loud: GAME_SERVER_SECRET must be set
 if (!process.env.GAME_SERVER_SECRET || process.env.GAME_SERVER_SECRET.length < 32) {
-  console.error('FATAL: GAME_SERVER_SECRET must be set to >= 32 chars.');
-  console.error('Create a .env file with: GAME_SERVER_SECRET=<your-key>');
-  console.error('Or set the environment variable before starting.');
-  console.error('Generate one: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"');
+  console.error('FATAL: GAME_SERVER_SECRET must be >= 32 chars.');
+  console.error('Create .env with: GAME_SERVER_SECRET=<your-key>');
+  console.error('Generate: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"');
   process.exit(1);
 }
 
@@ -77,42 +73,17 @@ const contentTypeFor = (filePath) => {
 import { createServer } from 'node:http';
 
 createServer(async (req, res) => {
-  if (req.url?.startsWith('/api/miku-chat/end')) {
-    await handleMikuChatEndRequest(req, res);
-    return;
-  }
-  if (req.url?.startsWith('/api/miku-chat')) {
-    await handleMikuChatRequest(req, res);
-    return;
-  }
-  if (req.url?.startsWith('/api/vocaloid-search')) {
-    await handleVocaloidSearchRequest(req, res);
-    return;
-  }
-  if (req.url?.startsWith('/api/vocaloid-lyrics')) {
-    await handleVocaloidLyricsRequest(req, res);
-    return;
-  }
-  if (req.url?.startsWith('/api/miku-memory')) {
-    await handleMikuMemoryRequest(req, res);
-    return;
-  }
-  if (req.url?.startsWith('/api/auth')) {
-    await handleAuthRequest(req, res);
-    return;
-  }
-  if (req.url?.startsWith('/api/runs/start')) {
-    await handleRunStartRequest(req, res);
-    return;
-  }
-  if (req.url?.startsWith('/api/leaderboard')) {
-    await handleLeaderboardRequest(req, res);
-    return;
-  }
+  if (req.url?.startsWith('/api/miku-chat/end'))    { await handleMikuChatEndRequest(req, res); return; }
+  if (req.url?.startsWith('/api/miku-chat'))         { await handleMikuChatRequest(req, res); return; }
+  if (req.url?.startsWith('/api/vocaloid-search'))   { await handleVocaloidSearchRequest(req, res); return; }
+  if (req.url?.startsWith('/api/vocaloid-lyrics'))   { await handleVocaloidLyricsRequest(req, res); return; }
+  if (req.url?.startsWith('/api/miku-memory'))       { await handleMikuMemoryRequest(req, res); return; }
+  if (req.url?.startsWith('/api/auth'))              { await handleAuthRequest(req, res); return; }
+  if (req.url?.startsWith('/api/runs/start'))        { await handleRunStartRequest(req, res); return; }
+  if (req.url?.startsWith('/api/leaderboard'))       { await handleLeaderboardRequest(req, res); return; }
   if (req.url === '/api/integrity' && req.method === 'GET') {
     res.statusCode = integrityManifest ? 200 : 404;
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
-    res.setHeader('Cache-Control', 'public, max-age=3600');
     res.end(JSON.stringify(integrityManifest || { error: 'NOT_FOUND' }));
     return;
   }
@@ -125,8 +96,7 @@ createServer(async (req, res) => {
   }
 
   const fileStat = statSync(filePath);
-  const contentType = contentTypeFor(filePath);
-  res.setHeader('Content-Type', contentType);
+  res.setHeader('Content-Type', contentTypeFor(filePath));
   res.setHeader('Accept-Ranges', 'bytes');
 
   const range = req.headers.range;
