@@ -2,6 +2,7 @@
   "name": "humans-are-cats-investigation",
   "version": "0.0.0",
   "description": "VOCALOID-themed stealth investigation platformer with a DeepSeek-powered Hatsune Miku NPC.",
+  "main": "electron/main.cjs",
   "license": "PolyForm-Noncommercial-1.0.0",
   "repository": {
     "type": "git",
@@ -14,11 +15,16 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
     "build:vocaloid-db": "node scripts/build-biliboard-hot-db.mjs",
     "preview": "vite preview",
-    "serve": "node server.mjs"
+    "serve": "node server.mjs",
+    "electron:dev": "vite build --mode electron && electron .",
+    "electron:build": "vite build --mode electron && electron-builder --dir",
+    "electron:dist": "vite build --mode electron && electron-builder",
+    "build:server": "node scripts/build-server.mjs"
   },
   "dependencies": {
     "@fontsource/space-mono": "^5.2.9",
@@ -34,9 +40,37 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.0.0",
     "autoprefixer": "^10.4.24",
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.19",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
+  },
+  "build": {
+    "appId": "com.cats.investigation",
+    "productName": "Humans are Cats Investigation",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "public/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      { "from": "electron/config.json", "to": "config.json" }
+    ],
+    "asar": true,
+    "win": {
+      "target": "nsis"
+    },
+    "mac": {
+      "target": "dmg"
+    },
+    "linux": {
+      "target": "AppImage"
+    }
   }
 }

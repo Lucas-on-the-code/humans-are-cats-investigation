@@ -141,6 +141,9 @@ export interface RunSummary {
   bestCombo: number;
   survivalTime: number;
   title: string;
+  integrity?: string;
+  codeHash?: string;
+  tamperFlags?: number;
 }
 
 export interface LeaderboardEntry extends RunSummary {

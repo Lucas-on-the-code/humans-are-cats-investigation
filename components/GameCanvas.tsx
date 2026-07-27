@@ -36,6 +36,9 @@ import {
   NpcChatTarget,
 } from '../types';
 import { gameAudio } from '../utils/audioSystem';
+import { applyDampedAcceleration, applySteppedGravity } from '../utils/frameRateMotion';
+import { checkFrameTiming } from '../utils/antiDebug';
+import initWasm, { GameState as WasmGameState } from '../public/wasm/game_state_core.js';
 
 interface GameCanvasProps {
   gameState: GameState;
@@ -59,9 +62,14 @@ interface GameCanvasProps {
 const BASE_HEIGHT = 600;
 const MIN_VIEWPORT_WIDTH = 320;
 const MIN_VIEWPORT_HEIGHT = 240;
+const MAX_RENDER_WIDTH = 1600;
+const MAX_RENDER_HEIGHT = 720;
 const MAX_CHUNKS_PER_GENERATION = 12;
+const COLLECT_FEEDBACK_INTERVAL_MS = 120;
 const VIRTUAL_GROUND_Y = 530;
 const BASE_FRAME_MS = 1000 / 60;
+const TARGET_RENDER_FPS = 60;
+const FRAME_INTERVAL_TOLERANCE_MS = 0.75;
 const DEFAULT_PARTICLE_LIMIT = 220;
 const DEFAULT_PROJECTILE_LIMIT = 60;
 const RUN_START_X = 220;
@@ -79,6 +87,7 @@ const INTRO_DROP_ARC_HEIGHT = 70;
 const MANUAL_ACCEL = 0.82;
 const GROUND_FRICTION = 0.82;
 const AIR_FRICTION = 0.94;
+const POWERED_MOVE_FRICTION = AIR_FRICTION;
 const MAX_MANUAL_SPEED = MOVE_SPEED + 1.4;
 const PROJECTILE_SPEED = 17;
 const PROJECTILE_MAX_RANGE = 300;
@@ -139,7 +148,7 @@ const getDistanceMeters = (distancePx: number) => Math.floor(distancePx / PIXELS
 const getDistanceHeat = (distance: number) => Math.min(1, Math.max(0, distance / (CHUNK_LENGTH * 18)));
 const getChunkHeat = (index: number) => Math.min(1, Math.max(0, (index - 2) / 32));
 const getAllowedDanger = (heat: number) => (heat < 0.28 ? 1 : heat < 0.62 ? 2 : 3);
-const RUNNING_JUMP_START_VX = Math.min(MAX_MANUAL_SPEED, (MANUAL_ACCEL * GROUND_FRICTION) / (1 - GROUND_FRICTION));
+const RUNNING_JUMP_START_VX = Math.min(MAX_MANUAL_SPEED, (MANUAL_ACCEL * POWERED_MOVE_FRICTION) / (1 - POWERED_MOVE_FRICTION));
 const JUMP_COIN_START_FRAME = 6;
 const JUMP_COIN_END_FRAME = 40;
 
@@ -280,6 +289,18 @@ const getViewportDims = () => {
   };
 };
 
+const getRenderDims = (viewport: { width: number; height: number }) => {
+  const renderScale = Math.min(
+    1,
+    MAX_RENDER_WIDTH / viewport.width,
+    MAX_RENDER_HEIGHT / viewport.height,
+  );
+  return {
+    width: Math.max(1, Math.round(viewport.width * renderScale)),
+    height: Math.max(1, Math.round(viewport.height * renderScale)),
+  };
+};
+
 const getVirtualWidth = (width: number, height: number) => {
   const safeWidth = Number.isFinite(width) && width > 0 ? Math.max(MIN_VIEWPORT_WIDTH, width) : 1280;
   const safeHeight = Number.isFinite(height) && height > 0 ? Math.max(MIN_VIEWPORT_HEIGHT, height) : 720;
@@ -345,6 +366,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   ), []);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [loadProgress, setLoadProgress] = useState(0);
   const [dims, setDims] = useState(getViewportDims);
 
   const playerRef = useRef<Player>({
@@ -373,6 +395,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const gameStateRef = useRef<GameState>(gameState);
   const keysRef = useRef<{ [key: string]: boolean }>({});
   const statsRef = useRef<RunStats>(emptyStats());
+  const wasmReadyRef = useRef(false);
+  const gameStateWasmRef = useRef<WasmGameState | null>(null);
   const nextChunkXRef = useRef(620);
   const leftAirWallXRef = useRef(RUN_START_X - 120);
   const chunkIndexRef = useRef(0);
@@ -396,7 +420,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const imagesRef = useRef<Record<string, DrawableAsset>>({});
   const layerDimsRef = useRef<Record<string, LayerDim>>({});
   const isTabVisibleRef = useRef<boolean>(typeof document !== 'undefined' ? !document.hidden : true);
-  const targetFpsRef = useRef<number>(60);
   const particleLimitRef = useRef<number>(DEFAULT_PARTICLE_LIMIT);
   const projectileLimitRef = useRef<number>(DEFAULT_PROJECTILE_LIMIT);
   const sceneQualityScaleRef = useRef<number>(1);
@@ -407,6 +430,16 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   useEffect(() => {
     gameStateRef.current = gameState;
   }, [gameState]);
+
+  useEffect(() => {
+    let cancelled = false;
+    initWasm().then(() => {
+      if (!cancelled) wasmReadyRef.current = true;
+    }).catch((err: unknown) => {
+      console.warn('[wasm] Failed to init anti-cheat WASM module:', err);
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   const getAssetSize = (asset: DrawableAsset) => {
     return { width: asset.naturalWidth, height: asset.naturalHeight };
@@ -436,7 +469,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const isMidEnd = !isLowEnd && (cores <= 8 || memory <= 8 || shortEdge <= 1080);
 
     if (isLowEnd) {
-      targetFpsRef.current = 40;
       particleLimitRef.current = 150;
       projectileLimitRef.current = 42;
       sceneQualityScaleRef.current = 0.5;
@@ -444,7 +476,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       return;
     }
     if (isMidEnd) {
-      targetFpsRef.current = 55;
       particleLimitRef.current = 180;
       projectileLimitRef.current = 50;
       sceneQualityScaleRef.current = 0.75;
@@ -452,7 +483,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       return;
     }
 
-    targetFpsRef.current = 60;
     particleLimitRef.current = DEFAULT_PARTICLE_LIMIT;
     projectileLimitRef.current = DEFAULT_PROJECTILE_LIMIT;
     sceneQualityScaleRef.current = 1;
@@ -507,6 +537,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const loadAllAssets = async () => {
       const promises: Promise<void>[] = [];
       const tempImages: Record<string, DrawableAsset> = {};
+      let completedAssets = 0;
+      let totalAssets = 0;
+      if (mounted) setLoadProgress(0);
       gameAudio.registerSfx(AUDIO_URLS);
       gameAudio.preloadSfx();
 
@@ -529,6 +562,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           if (settled) return;
           settled = true;
           clearTimeout(timeoutId);
+          completedAssets++;
+          if (mounted && totalAssets > 0) setLoadProgress(completedAssets / totalAssets);
           res();
         };
         const timeoutId = window.setTimeout(done, 12000);
@@ -556,6 +591,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       NPC_SPRITE_URLS.forEach((s, i) => promises.push(addImage(`decor_npc_${i}`, withQuality(s, spriteQualityScaleRef.current), s)));
       NPC_VARIANT_2_URLS.forEach((s, i) => promises.push(addImage(`decor_npc_v2_${i}`, withQuality(s, spriteQualityScaleRef.current), s)));
       CAR_SPRITE_KEYS.forEach((key) => promises.push(addImage(`car_${key}`, `/sprites/cars/${key}.png`)));
+      totalAssets = promises.length;
 
       await Promise.all(promises);
       if (!mounted) return;
@@ -579,6 +615,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
       });
       layerDimsRef.current = tempDims;
+      setLoadProgress(1);
       setIsLoaded(true);
     };
     loadAllAssets();
@@ -613,6 +650,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       direction: 1,
     };
     statsRef.current = emptyStats();
+    // Create fresh WASM anti-cheat state
+    if (wasmReadyRef.current) {
+      try {
+        gameStateWasmRef.current = new WasmGameState();
+      } catch (e) {
+        console.warn('[wasm] Failed to create GameState instance:', e);
+        gameStateWasmRef.current = null;
+      }
+    }
     platformsRef.current = [];
     hazardsRef.current = [];
     obstaclesRef.current = [];
@@ -749,7 +795,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     onNpcChatAnchorChange(getNpcChatAnchor(target));
   };
 
-  const awardScore = (base: number, label: string, x: number, y: number, combo = true) => {
+  const awardScore = (base: number, label: string | null, x: number, y: number, combo = true) => {
+    const gs = gameStateWasmRef.current;
+    if (gs) {
+      const score = combo ? gs.add_score(base) : base;
+      if (label) addFloatingText(`${label} +${Math.round(score)}`, x, y, combo ? '#ffe066' : '#9ee6ff', combo ? 18 : 15);
+      return;
+    }
+    // Fallback without WASM
     const stats = statsRef.current;
     const now = Date.now();
     if (combo) {
@@ -760,36 +813,43 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     }
     const score = Math.round(base * stats.multiplier);
     stats.score += score;
-    addFloatingText(`${label} +${score}`, x, y, combo ? '#ffe066' : '#9ee6ff', combo ? 18 : 15);
+    if (label) addFloatingText(`${label} +${score}`, x, y, combo ? '#ffe066' : '#9ee6ff', combo ? 18 : 15);
   };
 
   const endRun = () => {
     if (endedRef.current) return;
     endedRef.current = true;
-    const stats = statsRef.current;
-    const hasFreerideBonus = stats.taxiRides >= TAXI_FREERIDE_THRESHOLD;
-    const score = Math.floor(stats.score + (hasFreerideBonus ? TAXI_FREERIDE_BONUS : 0));
-    const title = hasFreerideBonus
-      ? t('title_taxi_king')
-      : stats.bestCombo >= 28
-        ? t('title_combo_frenzy')
-        : stats.nearMisses >= 8
-          ? t('title_graze_master')
-          : getDistanceMeters(stats.distance) >= 180
-            ? t('title_long_distance')
-            : stats.evidence >= 6
-              ? t('title_evidence_hunter')
-              : t('title_trainee');
+    const gs = gameStateWasmRef.current;
+    if (!gs) {
+      // fallback: use old stats path if WASM not available
+      const stats = statsRef.current;
+      onGameOver({
+        score: Math.floor(stats.score),
+        distance: getDistanceMeters(stats.distance),
+        evidence: stats.evidence,
+        scans: stats.scans,
+        nearMisses: stats.nearMisses,
+        bestCombo: stats.bestCombo,
+        survivalTime: Math.floor((Date.now() - stats.startedAt) / 1000),
+        title: t('title_trainee'),
+      });
+      return;
+    }
+    const summary = gs.finalize_run(BigInt(Date.now())) as RunSummary & { integrity?: string };
+    // Resolve title i18n keys to display text
+    const titleMap: Record<string, string> = {
+      taxi_king: t('title_taxi_king'),
+      combo_frenzy: t('title_combo_frenzy'),
+      graze_master: t('title_graze_master'),
+      long_distance: t('title_long_distance'),
+      evidence_hunter: t('title_evidence_hunter'),
+      trainee: t('title_trainee'),
+    };
     onGameOver({
-      score,
-      distance: getDistanceMeters(stats.distance),
-      evidence: stats.evidence,
-      scans: stats.scans,
-      nearMisses: stats.nearMisses,
-      bestCombo: stats.bestCombo,
-      survivalTime: Math.floor((Date.now() - stats.startedAt) / 1000),
-      title,
-    });
+      ...summary,
+      title: titleMap[summary.title] || t('title_trainee'),
+      integrity: summary.integrity,
+    } as RunSummary & { integrity?: string });
   };
 
   const makeNpc = (x: number, y: number, overrides: Partial<NPC> = {}): NPC => ({
@@ -1374,25 +1434,31 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       const p = playerRef.current;
       if (deathAnimRef.current.active) return;
       if (p.invulnerableTime > 0 || p.isDashing) return;
-      if (p.shieldTime > 0) {
+      const gs = gameStateWasmRef.current;
+      if (gs ? gs.shield_active() : p.shieldTime > 0) {
+        if (gs) gs.deactivate_shield();
         p.shieldTime = 0;
         screenShakeRef.current = 6;
         addFloatingText(t('float_shield'), p.x, p.y - 20, '#66f2c2', 18);
         playSound('DASH');
         return;
       }
-      p.hp = Math.max(0, p.hp - amount);
-      p.panic = Math.min(100, p.panic + 25);
+      const died = gs ? gs.apply_damage(amount) : false;
+      // Sync player fields from WASM for rendering
+      if (gs) {
+        p.panic = gs.panic();
+      } else {
+        p.hp = Math.max(0, p.hp - amount);
+        p.panic = Math.min(100, p.panic + 25);
+      }
       p.invulnerableTime = PLAYER_DAMAGE_INVULN;
       p.vy = Math.min(p.vy, -5);
-      statsRef.current.combo = 0;
-      statsRef.current.multiplier = 1;
       screenShakeRef.current = 12;
       emitParticles(p.x + p.width / 2, p.y + p.height / 2, '#ff3355', 14, 7);
       if (sourceX < p.x) p.x += 18;
-      if (p.hp <= 0) {
+      if (died || (!gs && p.hp <= 0)) {
         deathAnimRef.current = { active: true, startedAt: Date.now() };
-        p.hp = 0;
+        if (!gs) p.hp = 0;
         p.vx = sourceX < p.x ? 2.6 : -2.6;
         p.vy = DEATH_POP_VY;
         p.isDashing = false;
@@ -1407,42 +1473,85 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       playSound('DAMAGE');
     };
 
+    let lastCollectFeedbackAt = 0;
     const collectItem = (it: Item) => {
       if (it.collected) return;
       const p = playerRef.current;
+      const gs = gameStateWasmRef.current;
       it.collected = true;
-      playSound('COLLECT');
       if (it.type === 'HEALTH') {
-        p.hp = Math.min(p.maxHp, p.hp + COMBAT.HEALTH_PACK_HEAL);
+        playSound('COLLECT');
+        if (gs) {
+          gs.apply_heal(COMBAT.HEALTH_PACK_HEAL);
+          p.hp = gs.hp();
+        } else {
+          p.hp = Math.min(p.maxHp, p.hp + COMBAT.HEALTH_PACK_HEAL);
+        }
         addFloatingText(t('float_heal'), it.x, it.y, '#66f2c2', 16);
         emitParticles(it.x + 15, it.y + 15, '#66f2c2', 10, 5);
         return;
       }
       if (it.type === 'MAGNET') {
+        playSound('COLLECT');
         p.magnetTime = BOOST_TIME;
         awardScore(180, t('float_magnet'), it.x, it.y);
         emitParticles(it.x + 15, it.y + 15, '#9ee6ff', 12, 6);
         return;
       }
       if (it.type === 'SHIELD') {
+        playSound('COLLECT');
         p.shieldTime = BOOST_TIME;
+        if (gs) gs.activate_shield();
         awardScore(180, t('float_shield'), it.x, it.y);
         emitParticles(it.x + 15, it.y + 15, '#66f2c2', 12, 6);
         return;
       }
       if (it.type === 'EVIDENCE') {
-        statsRef.current.evidence++;
-        p.evidenceCollected = statsRef.current.evidence;
-        awardScore(1000, t('float_data'), it.x, it.y);
+        playSound('COLLECT');
+        if (gs) {
+          const scoreAdded = gs.collect_evidence();
+          p.evidenceCollected = gs.evidence();
+          addFloatingText(`${t('float_data')} +${Math.round(scoreAdded)}`, it.x, it.y, '#FFD700', 18);
+        } else {
+          statsRef.current.evidence++;
+          p.evidenceCollected = statsRef.current.evidence;
+          awardScore(1000, t('float_data'), it.x, it.y);
+        }
         emitParticles(it.x + 15, it.y + 15, '#FFD700', 16, 7);
         return;
       }
-      awardScore(90, t('float_fish'), it.x, it.y);
-      emitParticles(it.x + 15, it.y + 15, '#ffe066', 6, 4);
+      const now = performance.now();
+      const shouldEmitFeedback = now - lastCollectFeedbackAt >= COLLECT_FEEDBACK_INTERVAL_MS;
+      if (shouldEmitFeedback) {
+        lastCollectFeedbackAt = now;
+        playSound('COLLECT');
+        awardScore(90, t('float_fish'), it.x, it.y);
+        emitParticles(it.x + 15, it.y + 15, '#ffe066', 6, 4);
+      } else {
+        awardScore(90, null, it.x, it.y);
+      }
+    };
+
+    const removeExpiredInPlace = <T extends { life: number }>(items: T[]) => {
+      for (let i = items.length - 1; i >= 0; i--) {
+        if (items[i].life <= 0) items.splice(i, 1);
+      }
+    };
+    const removeCollectedInPlace = (items: Item[]) => {
+      for (let i = items.length - 1; i >= 0; i--) {
+        if (items[i].collected) items.splice(i, 1);
+      }
+    };
+    const compactByBoundsInPlace = <T extends { x: number; width: number }>(items: T[], left: number, right: number) => {
+      for (let i = items.length - 1; i >= 0; i--) {
+        const item = items[i];
+        if (item.x + item.width <= left || item.x >= right) items.splice(i, 1);
+      }
     };
 
     let lastFrameTime = performance.now();
-    const frameInterval = () => 1000 / targetFpsRef.current;
+    let worldCleanupTick = 0;
+    const frameInterval = 1000 / TARGET_RENDER_FPS;
     const scheduleLoop = () => {
       if (
         disposed
@@ -1475,11 +1584,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         return;
       }
       const deltaMs = now - lastFrameTime;
-      if (deltaMs < frameInterval()) {
+      if (deltaMs < frameInterval - FRAME_INTERVAL_TOLERANCE_MS) {
         scheduleLoop();
         return;
       }
-      const clampedDelta = Math.min(deltaMs, 33);
+      const clampedDelta = Math.min(deltaMs, BASE_FRAME_MS * 2);
       const dtScale = clampedDelta / BASE_FRAME_MS;
       lastFrameTime = now;
       update(dtScale);
@@ -1492,10 +1601,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       if (endedRef.current) return;
       const p = playerRef.current;
       const stats = statsRef.current;
+      const gs = gameStateWasmRef.current;
       const keys = keysRef.current;
       const touch = touchInputRef.current;
       const virtualWidth = getVirtualWidth(dims.width, dims.height);
       const now = Date.now();
+
+      checkFrameTiming(now);
 
       if (introDropRef.current.phase !== 'done') {
         ensureGenerated(virtualWidth);
@@ -1508,9 +1620,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           cameraRef.current.x = getIntroCameraX(virtualWidth);
           if (anyTouchInput || anyKeyInput || pointerAction) startIntroJump();
           particlesRef.current.forEach((part) => { part.x += part.vx * dtScale; part.y += part.vy * dtScale; part.life -= dtScale; });
-          particlesRef.current = particlesRef.current.filter((part) => part.life > 0);
+          removeExpiredInPlace(particlesRef.current);
           floatingTextsRef.current.forEach((ft) => { ft.y += ft.vy * dtScale; ft.life -= dtScale; });
-          floatingTextsRef.current = floatingTextsRef.current.filter((ft) => ft.life > 0);
+          removeExpiredInPlace(floatingTextsRef.current);
           return;
         }
 
@@ -1530,9 +1642,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         cameraRef.current.x = lerp(introDropRef.current.startCameraX, targetCamX, cameraEase);
 
         particlesRef.current.forEach((part) => { part.x += part.vx * dtScale; part.y += part.vy * dtScale; part.life -= dtScale; });
-        particlesRef.current = particlesRef.current.filter((part) => part.life > 0);
+        removeExpiredInPlace(particlesRef.current);
         floatingTextsRef.current.forEach((ft) => { ft.y += ft.vy * dtScale; ft.life -= dtScale; });
-        floatingTextsRef.current = floatingTextsRef.current.filter((ft) => ft.life > 0);
+        removeExpiredInPlace(floatingTextsRef.current);
 
         if (introProgress >= 1) {
           p.x = RUN_START_X;
@@ -1549,8 +1661,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         p.isDashing = false;
         p.isSliding = false;
         p.isGrounded = false;
-        p.vy += GRAVITY * dtScale;
-        p.y += p.vy * dtScale;
+        const verticalMotion = applySteppedGravity(p.y, p.vy, GRAVITY, dtScale);
+        p.y = verticalMotion.position;
+        p.vy = verticalMotion.velocity;
         p.x += p.vx * dtScale;
         p.vx *= Math.pow(0.985, dtScale);
         p.invulnerableTime = Math.max(p.invulnerableTime, 250);
@@ -1562,14 +1675,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           car.x += car.vx * dtScale;
         });
         particlesRef.current.forEach((part) => { part.x += part.vx * dtScale; part.y += part.vy * dtScale; part.life -= dtScale; });
-        particlesRef.current = particlesRef.current.filter((part) => part.life > 0);
+        removeExpiredInPlace(particlesRef.current);
         floatingTextsRef.current.forEach((ft) => { ft.y += ft.vy * dtScale; ft.life -= dtScale; });
-        floatingTextsRef.current = floatingTextsRef.current.filter((ft) => ft.life > 0);
+        removeExpiredInPlace(floatingTextsRef.current);
         if (screenShakeRef.current > 0) screenShakeRef.current = Math.max(0, screenShakeRef.current - 1.2 * dtScale);
 
         const viewLeft = cameraRef.current.x - CLEAN_BEHIND;
         const viewRight = cameraRef.current.x + virtualWidth + CLEAN_BEHIND;
-        carsRef.current = carsRef.current.filter((o) => o.x + o.width > viewLeft && o.x < viewRight);
+        compactByBoundsInPlace(carsRef.current, viewLeft, viewRight);
 
         const elapsed = now - deathAnimRef.current.startedAt;
         if (elapsed > DEATH_ANIM_MAX_MS || p.y > BASE_HEIGHT + 180) endRun();
@@ -1600,9 +1713,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       else if (p.isDashing) p.isDashing = false;
       if (p.invulnerableTime > 0) p.invulnerableTime = Math.max(0, p.invulnerableTime - 16 * dtScale);
       if (p.magnetTime > 0) p.magnetTime = Math.max(0, p.magnetTime - 16 * dtScale);
-      if (p.shieldTime > 0) p.shieldTime = Math.max(0, p.shieldTime - 16 * dtScale);
-      if (p.slideTime > 0) p.slideTime = Math.max(0, p.slideTime - 16 * dtScale);
-      p.isSliding = p.slideTime > 0 || (slidePressed && p.isGrounded);
+      if (p.shieldTime > 0) {
+        p.shieldTime = Math.max(0, p.shieldTime - 16 * dtScale);
+        if (p.shieldTime <= 0 && gs) gs.deactivate_shield();
+      }
+      p.slideTime = 0;
+      p.isSliding = slidePressed && p.isGrounded;
       const prevY = p.y;
 
       if (isTextInputActive) {
@@ -1647,20 +1763,20 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       if (p.isDashing) {
         p.vx = p.direction * DASH_SPEED;
       } else {
-        p.vx += horizontalInput * MANUAL_ACCEL * dtScale;
-        p.vx *= p.isGrounded ? GROUND_FRICTION : AIR_FRICTION;
+        const movementFriction = horizontalInput !== 0
+          ? POWERED_MOVE_FRICTION
+          : p.isGrounded ? GROUND_FRICTION : AIR_FRICTION;
+        p.vx = applyDampedAcceleration(p.vx, horizontalInput, MANUAL_ACCEL, movementFriction, dtScale);
         p.vx = Math.max(-MAX_MANUAL_SPEED, Math.min(MAX_MANUAL_SPEED, p.vx));
         if (horizontalInput === 0 && Math.abs(p.vx) < 0.08) p.vx = 0;
       }
-      if (!p.isDashing) p.vy += GRAVITY * dtScale;
-
       if (jumpEdge && p.isGrounded && !p.isSliding) {
-        p.vy = JUMP_FORCE;
+        // Start one gravity step before the legacy launch velocity so the first
+        // simulated 60 Hz frame still moves by exactly JUMP_FORCE.
+        p.vy = JUMP_FORCE - GRAVITY;
         p.isGrounded = false;
         playSound('JUMP');
       }
-      if (slidePressed && p.isGrounded) p.slideTime = 520;
-
       p.x += p.vx * dtScale;
       const leftWallX = leftAirWallXRef.current;
       if (p.x < leftWallX) {
@@ -1669,7 +1785,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         p.isDashing = false;
         p.dashTime = 0;
       }
-      p.y += p.vy * dtScale;
+      if (p.isDashing) {
+        p.y += p.vy * dtScale;
+      } else {
+        const verticalMotion = applySteppedGravity(p.y, p.vy, GRAVITY, dtScale);
+        p.y = verticalMotion.position;
+        p.vy = verticalMotion.velocity;
+      }
       }
       if (ridingCar) {
         p.isGrounded = true;
@@ -1719,6 +1841,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         p.isSliding = false;
         p.isDashing = false;
         stats.taxiRides++;
+        if (gs) gs.record_taxi_ride();
         const taxiText = stats.taxiRides >= TAXI_FREERIDE_THRESHOLD
           ? t('float_taxi_free')
           : t('float_taxi_board_progress', { count: stats.taxiRides, threshold: TAXI_FREERIDE_THRESHOLD });
@@ -1778,13 +1901,18 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
 
       const previousDistance = stats.distance;
-      stats.distance = Math.max(stats.distance, p.x - RUN_START_X);
-      if (stats.distance > previousDistance) {
-        stats.score += ((stats.distance - previousDistance) / PIXELS_PER_METER) * (18 + heat * 20);
-      }
-      if (stats.combo > 0 && now - stats.lastComboAt > COMBO_WINDOW_MS) {
-        stats.combo = 0;
-        stats.multiplier = 1;
+      if (gs) {
+        stats.distance = gs.update_distance(p.x);
+        gs.check_combo_timeout(BigInt(now));
+      } else {
+        stats.distance = Math.max(stats.distance, p.x - RUN_START_X);
+        if (stats.distance > previousDistance) {
+          stats.score += ((stats.distance - previousDistance) / PIXELS_PER_METER) * (18 + heat * 20);
+        }
+        if (stats.combo > 0 && now - stats.lastComboAt > COMBO_WINDOW_MS) {
+          stats.combo = 0;
+          stats.multiplier = 1;
+        }
       }
 
       if (p.attackCooldown > 0) p.attackCooldown = Math.max(0, p.attackCooldown - 16 * dtScale);
@@ -1808,8 +1936,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         if (!obstacle.passed && p.x > obstacle.x + obstacle.width) {
           obstacle.passed = true;
           if (Math.abs(hitbox.y + hitbox.height - (obstacle.y + obstacle.height)) < 70) {
-            stats.nearMisses++;
-            awardScore(180, t('float_near'), obstacle.x, obstacle.y - 12);
+            if (gs) {
+              const added = gs.record_near_miss();
+              addFloatingText(`${t('float_near')} +${Math.round(added)}`, obstacle.x, obstacle.y - 12, '#ffe066', 18);
+            } else {
+              stats.nearMisses++;
+              awardScore(180, t('float_near'), obstacle.x, obstacle.y - 12);
+            }
           }
         }
         if (rectsOverlap(hitbox, obstacle)) {
@@ -1822,8 +1955,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         if (!hazard.passed && p.x > hazard.x + hazard.width) {
           hazard.passed = true;
           if (hitbox.y + hitbox.height > hazard.y - 46) {
-            stats.nearMisses++;
-            awardScore(220, t('float_near'), hazard.x, hazard.y - 10);
+            if (gs) {
+              const added = gs.record_near_miss();
+              addFloatingText(`${t('float_near')} +${Math.round(added)}`, hazard.x, hazard.y - 10, '#ffe066', 18);
+            } else {
+              stats.nearMisses++;
+              awardScore(220, t('float_near'), hazard.x, hazard.y - 10);
+            }
           }
         }
         if (isHazardActive(hazard, now) && rectsOverlap(hitbox, hazard)) {
@@ -1849,7 +1987,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           const canSeePlayer = !activeRide && forwardDistance > -15 && forwardDistance < n.visionRange && verticalDistance < n.visionHeight / 2 && !p.isDashing;
           if (canSeePlayer) {
             n.alertLevel = Math.min(100, n.alertLevel + (1.35 + heat * 0.8) * dtScale);
-            p.panic = Math.min(100, p.panic + 0.9 * dtScale);
+            if (gs) {
+              gs.add_panic(0.9 * dtScale);
+              p.panic = gs.panic();
+            } else {
+              p.panic = Math.min(100, p.panic + 0.9 * dtScale);
+            }
             if (n.alertLevel >= 58 && n.damageCooldown <= 0) {
               damagePlayer(COMBAT.ALERT_DAMAGE, n.x + n.width / 2);
               n.damageCooldown = NPC_PULSE_COOLDOWN;
@@ -1860,7 +2003,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           if (!n.chatKind && !activeRide && rectsOverlap(hitbox, n)) damagePlayer(COMBAT.CONTACT_DAMAGE, n.x + n.width / 2);
         }
       });
-      p.panic = Math.max(0, p.panic - 0.35 * dtScale);
+      if (gs) {
+        gs.decay_panic(dtScale);
+        p.panic = gs.panic();
+      } else {
+        p.panic = Math.max(0, p.panic - 0.35 * dtScale);
+      }
 
       pedestriansRef.current.forEach((ped) => {
         ped.x += ped.vx * dtScale;
@@ -1875,7 +2023,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       });
 
       projectilesRef.current.forEach((pr) => {
-        if (pr.life <= 0) return;
+        if (pr.life <= 0) return; // Do not move or re-check an already-dead projectile.
         pr.x += pr.vx * dtScale;
         pr.life -= dtScale;
         if (pr.life <= 0) return;
@@ -1889,8 +2037,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             if (n.scanHits >= n.maxScanHits) {
               n.scanned = true;
               n.alertLevel = 0;
-              stats.scans++;
-              awardScore(n.isTarget ? 700 : 240, n.isTarget ? t('float_scan_target') : t('float_scan'), n.x, n.y - 8);
+              if (gs) {
+                const added = gs.record_scan(n.isTarget);
+                addFloatingText(`${n.isTarget ? t('float_scan_target') : t('float_scan')} +${Math.round(added)}`, n.x, n.y - 8, '#ffe066', 18);
+              } else {
+                stats.scans++;
+                awardScore(n.isTarget ? 700 : 240, n.isTarget ? t('float_scan_target') : t('float_scan'), n.x, n.y - 8);
+              }
               if (n.isTarget) addPickup(n.x + n.width / 2 - 15, n.y + 10, 'EVIDENCE');
             } else {
               n.alertLevel = Math.min(100, n.alertLevel + 24);
@@ -1898,12 +2051,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           }
         });
       });
-      projectilesRef.current = projectilesRef.current.filter((pr) => pr.life > 0);
+      removeExpiredInPlace(projectilesRef.current);
 
+      const pickupHitbox = getPlayerPickupHitbox();
       itemsRef.current.forEach((it) => {
         it.floatOffset = Math.sin(now / 200 + it.id) * 8;
         const itemCircle = getItemPickupCircle(it);
-        const pickupHitbox = getPlayerPickupHitbox();
         if (p.magnetTime > 0 && !it.collected) {
           const targetX = pickupHitbox.x + pickupHitbox.width / 2;
           const targetY = pickupHitbox.y + pickupHitbox.height / 2;
@@ -1916,14 +2069,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             it.y += dy * pull;
           }
         }
-        if (!it.collected && circleRectOverlap(getItemPickupCircle(it), pickupHitbox)) collectItem(it);
+        if (!it.collected && circleRectOverlap(itemCircle, pickupHitbox)) collectItem(it);
       });
-      itemsRef.current = itemsRef.current.filter((it) => !it.collected);
+      removeCollectedInPlace(itemsRef.current);
 
       particlesRef.current.forEach((part) => { part.x += part.vx * dtScale; part.y += part.vy * dtScale; part.life -= dtScale; });
-      particlesRef.current = particlesRef.current.filter((part) => part.life > 0);
+      removeExpiredInPlace(particlesRef.current);
       floatingTextsRef.current.forEach((ft) => { ft.y += ft.vy * dtScale; ft.life -= dtScale; });
-      floatingTextsRef.current = floatingTextsRef.current.filter((ft) => ft.life > 0);
+      removeExpiredInPlace(floatingTextsRef.current);
       if (screenShakeRef.current > 0) screenShakeRef.current = Math.max(0, screenShakeRef.current - 1.2 * dtScale);
 
       const CLEANUP_BUFFER_LEFT = virtualWidth * 1.5;
@@ -1937,15 +2090,24 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         cleanupLeft + virtualWidth * 0.4,
       );
 
-      platformsRef.current = platformsRef.current.filter(o => o.x + o.width > cleanupLeft && o.x < cleanupRight);
-      hazardsRef.current = hazardsRef.current.filter(o => o.x + o.width > cleanupLeft && o.x < cleanupRight);
-      obstaclesRef.current = obstaclesRef.current.filter(o => o.x + o.width > cleanupLeft && o.x < cleanupRight);
-      pedestriansRef.current = pedestriansRef.current.filter(o => o.x + o.width > cleanupLeft && o.x < cleanupRight);
-      npcsRef.current = npcsRef.current.filter(o => o.x + o.width > cleanupLeft && o.x < cleanupRight);
-      itemsRef.current = itemsRef.current.filter(o => o.x + o.width > cleanupLeft && o.x < cleanupRight);
+      worldCleanupTick++;
+      if (worldCleanupTick >= 30) {
+        worldCleanupTick = 0;
+        compactByBoundsInPlace(platformsRef.current, cleanupLeft, cleanupRight);
+        compactByBoundsInPlace(hazardsRef.current, cleanupLeft, cleanupRight);
+        compactByBoundsInPlace(obstaclesRef.current, cleanupLeft, cleanupRight);
+        compactByBoundsInPlace(pedestriansRef.current, cleanupLeft, cleanupRight);
+        compactByBoundsInPlace(npcsRef.current, cleanupLeft, cleanupRight);
+        compactByBoundsInPlace(itemsRef.current, cleanupLeft, cleanupRight);
 
-      const CAR_CLEANUP_LEFT = cameraRef.current.x - 3000;
-      carsRef.current = carsRef.current.filter(o => o.occupied || (o.x + o.width > CAR_CLEANUP_LEFT && o.x < cleanupRight));
+        const carCleanupLeft = cameraRef.current.x - 3000;
+        for (let i = carsRef.current.length - 1; i >= 0; i--) {
+          const car = carsRef.current[i];
+          if (!car.occupied && (car.x + car.width <= carCleanupLeft || car.x >= cleanupRight)) {
+            carsRef.current.splice(i, 1);
+          }
+        }
+      }
 
       const minCameraX = Math.max(0, leftAirWallXRef.current - virtualWidth * AIR_WALL_CAMERA_SAFE_RATIO);
       const targetCamX = Math.max(minCameraX, getRunCameraX(p.x, virtualWidth));
@@ -1963,47 +2125,37 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       scaleOverride?: number,
     ) => {
       const centerX = x + width / 2;
-      const bottomY = y + height;
-      const heightAboveGround = groundY - bottomY;
-      const baseScale = 1 + Math.max(0, heightAboveGround) / 90;
-      const shadowScale = scaleOverride ?? baseScale;
-
-      const baseAlpha =
-        Math.min(0.45 * alphaScale, 0.45) *
-        (1 - Math.min(1, heightAboveGround / 180));
-
-      const shadowAlpha = enableBloom
-        ? Math.min(0.35, baseAlpha * bloomStrength)
-        : baseAlpha;
-
-      const shadowWidth = width * shadowScale * 0.9 * (enableBloom ? bloomStrength : 1);
-      const shadowHeight = Math.max(4, width * 0.3 * shadowScale * (enableBloom ? bloomStrength : 1));
+      const heightAboveGround = groundY - (y + height);
+      const shadowScale = scaleOverride ?? (1 + Math.max(0, heightAboveGround) / 90);
+      const baseAlpha = Math.min(0.3 * alphaScale, 0.3) * (1 - Math.min(1, heightAboveGround / 180));
+      const shadowAlpha = enableBloom ? Math.min(0.24, baseAlpha * bloomStrength) : baseAlpha;
+      const shadowWidth = width * shadowScale * 0.72 * (enableBloom ? bloomStrength : 1);
+      const shadowHeight = Math.max(3, width * 0.22 * shadowScale * (enableBloom ? bloomStrength : 1));
 
       ctx.save();
       if (enableBloom && shadowAlpha > 0.08) {
-        const layers = 3;
-        for (let i = layers; i >= 1; i--) {
-          const t = i / layers;
-          ctx.globalAlpha = shadowAlpha * (1 - t) * 0.7;
+        for (let i = 3; i >= 1; i--) {
+          const layerScale = i / 3;
+          ctx.globalAlpha = shadowAlpha * (1 - layerScale) * 0.7;
           ctx.fillStyle = '#000';
           ctx.beginPath();
-          const w = shadowWidth * (1 + t * 0.3);
-          const h = shadowHeight * (1 + t * 0.3);
-          ctx.ellipse(centerX, groundY, w / 2, h / 2, 0, 0, Math.PI * 2);
+          ctx.ellipse(
+            centerX,
+            groundY,
+            shadowWidth * (1 + layerScale * 0.3) / 2,
+            shadowHeight * (1 + layerScale * 0.3) / 2,
+            0,
+            0,
+            Math.PI * 2,
+          );
           ctx.fill();
         }
-        ctx.globalAlpha = shadowAlpha * 0.85;
-        ctx.fillStyle = '#000';
-        ctx.beginPath();
-        ctx.ellipse(centerX, groundY, shadowWidth / 2, shadowHeight / 2, 0, 0, Math.PI * 2);
-        ctx.fill();
-      } else {
-        ctx.globalAlpha = Math.max(0.08, shadowAlpha);
-        ctx.fillStyle = '#000';
-        ctx.beginPath();
-        ctx.ellipse(centerX, groundY, shadowWidth / 2, shadowHeight / 2, 0, 0, Math.PI * 2);
-        ctx.fill();
       }
+      ctx.globalAlpha = Math.max(0.045, shadowAlpha * 0.78);
+      ctx.fillStyle = '#000';
+      ctx.beginPath();
+      ctx.ellipse(centerX, groundY, shadowWidth / 2, shadowHeight / 2, 0, 0, Math.PI * 2);
+      ctx.fill();
       ctx.restore();
     };
 
@@ -2011,9 +2163,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       const centerX = n.x + n.width / 2;
       const bodyColor = n.scanned ? '#66f2c2' : n.type === NpcType.LEADER ? '#ff9f1c' : n.isTarget ? '#ffd166' : '#94a3b8';
       const accentColor = n.scanned ? '#103c35' : n.isTarget ? '#111827' : '#0f172a';
-      if (sceneQualityScaleRef.current >= 0.5) {
-        drawDropShadow(n.x, n.y, n.width, n.height);
-      }
+      if (sceneQualityScaleRef.current >= 0.5) drawDropShadow(n.x, n.y, n.width, n.height);
       ctx.save();
       ctx.translate(centerX, n.y);
       if (n.scanned) {
@@ -2043,6 +2193,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           : n.spriteKey.startsWith('decor_npc_')
             ? `decor_npc_${Math.floor(now / 130) % 4}`
             : n.spriteKey;
+        ctx.fillStyle = 'rgba(0,0,0,0.3)';
+        ctx.beginPath();
+        ctx.ellipse(0, n.height + 5, n.width * 0.52, 8, 0, 0, Math.PI * 2);
+        ctx.fill();
         ctx.save();
         if (n.vx > 0) ctx.scale(-1, 1);
         drawImageSafe(spriteKey, -n.width / 2, 0, n.width, n.height);
@@ -2071,7 +2225,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     };
 
     const draw = () => {
-      const scale = Math.max(MIN_VIEWPORT_HEIGHT, dims.height) / BASE_HEIGHT;
+      const scale = Math.max(MIN_VIEWPORT_HEIGHT, canvas.height) / BASE_HEIGHT;
       const virtualWidth = getVirtualWidth(dims.width, dims.height);
       const camX = cameraRef.current.x;
       const shake = screenShakeRef.current > 0 ? (Math.random() - 0.5) * screenShakeRef.current : 0;
@@ -2111,10 +2265,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
       pedestriansRef.current.forEach((ped) => {
         if (ped.x + ped.width < viewLeft || ped.x > viewRight) return;
-        if (sceneQualityScaleRef.current >= 0.5) {
-          if (ped.x > viewLeft - 60 && ped.x < viewRight + 60) {
-            drawDropShadow(ped.x, ped.y, ped.width, ped.height);
-          }
+        if (sceneQualityScaleRef.current >= 0.5 && ped.x > viewLeft - 60 && ped.x < viewRight + 60) {
+          drawDropShadow(ped.x, ped.y, ped.width, ped.height);
         }
         const frameCount = ped.spriteSet === 'npc' ? 4 : 8;
         const frame = Math.floor((now + ped.frameOffset) / 130) % frameCount;
@@ -2156,6 +2308,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
         ctx.globalAlpha = active ? 0.95 : 0.22;
         ctx.fillStyle = active ? '#ff214f' : '#7b2538';
+        ctx.shadowColor = active ? '#ff214f' : 'transparent';
+        ctx.shadowBlur = active ? 18 : 0;
         ctx.fillRect(hazard.x, hazard.y, hazard.width, hazard.height);
         ctx.shadowBlur = 0;
         ctx.fillStyle = active ? '#ffd1dc' : '#915265';
@@ -2168,11 +2322,17 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
       obstaclesRef.current.forEach((obstacle) => {
         if (obstacle.x + obstacle.width < viewLeft || obstacle.x > viewRight) return;
-        if (sceneQualityScaleRef.current >= 0.5) {
-          if (obstacle.x > viewLeft - 60 && obstacle.x < viewRight + 60) {
-            const shadowScale = obstacle.type === 'LOW_BAR' ? 0.9 : 1;
-            drawDropShadow(obstacle.x, obstacle.y, obstacle.width, obstacle.height, VIRTUAL_GROUND_Y, 1, false, shadowScale);
-          }
+        if (sceneQualityScaleRef.current >= 0.5 && obstacle.x > viewLeft - 60 && obstacle.x < viewRight + 60) {
+          drawDropShadow(
+            obstacle.x,
+            obstacle.y,
+            obstacle.width,
+            obstacle.height,
+            VIRTUAL_GROUND_Y,
+            1,
+            false,
+            obstacle.type === 'LOW_BAR' ? 0.9 : 1,
+          );
         }
         if (obstacle.type === 'BARRIER') {
           ctx.fillStyle = '#f97316';
@@ -2266,26 +2426,21 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
       itemsRef.current.forEach((it) => {
         if (it.x + it.width < viewLeft || it.x > viewRight) return;
-        const glowColor = it.type === 'HEALTH' ? '#00cc88' : it.type === 'MAGNET' ? '#9ee6ff' : it.type === 'SHIELD' ? '#66f2c2' : it.type === 'EVIDENCE' ? COLORS.evidence : '#ffe066';
-        if (sceneQualityScaleRef.current >= 0.5) {
-          ctx.save();
-          ctx.shadowColor = glowColor;
-          ctx.shadowBlur = 14 * bloomStrength;
-          ctx.fillStyle = glowColor;
-          ctx.beginPath();
-          ctx.arc(it.x + 15, it.y + 15 + it.floatOffset, 15, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.restore();
-        } else {
-          ctx.fillStyle = glowColor;
-          ctx.beginPath();
-          ctx.arc(it.x + 15, it.y + 15 + it.floatOffset, 15, 0, Math.PI * 2);
-          ctx.fill();
-        }
         ctx.textAlign = 'left';
         const label = it.type === 'HEALTH' ? '+' : it.type === 'MAGNET' ? 'M' : it.type === 'SHIELD' ? 'S' : it.type === 'EVIDENCE' ? 'D' : '•';
-        ctx.fillStyle = '#07111f';
+        const glowColor = it.type === 'HEALTH' ? '#00cc88' : it.type === 'MAGNET' ? '#9ee6ff' : it.type === 'SHIELD' ? '#66f2c2' : it.type === 'EVIDENCE' ? COLORS.evidence : '#ffe066';
+        ctx.save();
+        if (sceneQualityScaleRef.current >= 0.5) {
+          ctx.shadowColor = glowColor;
+          ctx.shadowBlur = 14 * bloomStrength;
+        }
+        ctx.fillStyle = glowColor;
         ctx.font = 'bold 24px "Space Mono", monospace';
+        ctx.beginPath();
+        ctx.arc(it.x + 15, it.y + 15 + it.floatOffset, 15, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+        ctx.fillStyle = '#07111f';
         ctx.textAlign = 'center';
         ctx.fillText(label, it.x + 15, it.y + 23 + it.floatOffset);
       });
@@ -2302,22 +2457,17 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       const playerInCar = carsRef.current.some((car) => car.occupied);
       const isDeathAnimating = deathAnimRef.current.active;
       const isIntroWaiting = introDropRef.current.phase === 'waiting';
-
-      if (!playerInCar && !isIntroWaiting && sceneQualityScaleRef.current >= 0.5) {
-        const playerBottomY = pl.y + (pl.isSliding ? 44 : pl.height);
-        if (pl.x > viewLeft - 60 && pl.x < viewRight + 60) {
-          drawDropShadow(
-            pl.x,
-            pl.y,
-            pl.width,
-            pl.isSliding ? 44 : pl.height,
-            VIRTUAL_GROUND_Y,
-            1,
-            true
-          );
-        }
+      if (!playerInCar && !isIntroWaiting && sceneQualityScaleRef.current >= 0.5 && pl.x > viewLeft - 60 && pl.x < viewRight + 60) {
+        drawDropShadow(
+          pl.x,
+          pl.y,
+          pl.width,
+          pl.isSliding ? 44 : pl.height,
+          VIRTUAL_GROUND_Y,
+          1,
+          true,
+        );
       }
-
       if (pl.isDashing) {
         dashTrailRef.current.push({ x: pl.x, y: pl.y });
         if (dashTrailRef.current.length > 5) dashTrailRef.current.shift();
@@ -2367,64 +2517,54 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ctx.restore();
       }
 
-    carsRef.current.forEach((car) => {
-      if (car.x + car.width < viewLeft || car.x > viewRight) return;
-      if (sceneQualityScaleRef.current >= 0.5) {
-        if (car.x > viewLeft - 60 && car.x < viewRight + 60) {
+      carsRef.current.forEach((car) => {
+        if (car.x + car.width < viewLeft || car.x > viewRight) return;
+        if (sceneQualityScaleRef.current >= 0.5 && car.x > viewLeft - 60 && car.x < viewRight + 60) {
           drawDropShadow(car.x, car.y, car.width, car.height, car.y + car.height);
         }
-      }
-      const canEnter = car.canRide && !car.occupied && !car.used && rectsOverlap(getPlayerHitbox(), getTaxiBoardingZone(car));
-      ctx.save();
-      drawImageSafe(`car_${car.spriteKey}`, car.x, car.y, car.width, car.height);
-      if (car.occupied) {
-        ctx.fillStyle = '#66f2c2';
+        const canEnter = car.canRide && !car.occupied && !car.used && rectsOverlap(getPlayerHitbox(), getTaxiBoardingZone(car));
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.28)';
         ctx.beginPath();
-        ctx.arc(car.x + car.width * 0.5, car.y + car.height * 0.38, 5, 0, Math.PI * 2);
+        ctx.ellipse(car.x + car.width / 2, car.y + car.height + 5, car.width * 0.46, 8, 0, 0, Math.PI * 2);
         ctx.fill();
-      }
-      if (canEnter) {
-        ctx.textAlign = 'center';
-        ctx.font = 'bold 13px "Space Mono", monospace';
-        ctx.fillStyle = '#66f2c2';
-        ctx.fillText(t('prompt_taxi_board'), car.x + car.width / 2, car.y - 12 + Math.sin(now / 180) * 4);
-      }
-      ctx.restore();
-    });
+        drawImageSafe(`car_${car.spriteKey}`, car.x, car.y, car.width, car.height);
+        if (car.occupied) {
+          ctx.fillStyle = '#66f2c2';
+          ctx.beginPath();
+          ctx.arc(car.x + car.width * 0.5, car.y + car.height * 0.38, 5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        if (canEnter) {
+          ctx.textAlign = 'center';
+          ctx.font = 'bold 13px "Space Mono", monospace';
+          ctx.fillStyle = '#66f2c2';
+          ctx.fillText(t('prompt_taxi_board'), car.x + car.width / 2, car.y - 12 + Math.sin(now / 180) * 4);
+        }
+        ctx.restore();
+      });
 
       particlesRef.current.forEach((pa) => {
         if (pa.x + pa.size < viewLeft || pa.x - pa.size > viewRight) return;
         ctx.globalAlpha = Math.max(0, pa.life / 52);
         ctx.fillStyle = pa.color;
         if (sceneQualityScaleRef.current >= 0.6) {
-          ctx.save();
           ctx.shadowColor = pa.color;
           ctx.shadowBlur = 6 * bloomStrength;
-          ctx.beginPath();
-          if (pa.shape === 'leaf') {
-            ctx.save();
-            ctx.translate(pa.x, pa.y);
-            ctx.rotate((pa.life + pa.x) * 0.08);
-            ctx.ellipse(0, 0, pa.size * 1.45, pa.size * 0.62, 0, 0, Math.PI * 2);
-            ctx.restore();
-          } else {
-            ctx.arc(pa.x, pa.y, pa.size, 0, Math.PI * 2);
-          }
-          ctx.fill();
+        }
+        ctx.beginPath();
+        if (pa.shape === 'leaf') {
+          ctx.save();
+          ctx.translate(pa.x, pa.y);
+          ctx.rotate((pa.life + pa.x) * 0.08);
+          ctx.ellipse(0, 0, pa.size * 1.45, pa.size * 0.62, 0, 0, Math.PI * 2);
           ctx.restore();
         } else {
-          ctx.beginPath();
-          if (pa.shape === 'leaf') {
-            ctx.save();
-            ctx.translate(pa.x, pa.y);
-            ctx.rotate((pa.life + pa.x) * 0.08);
-            ctx.ellipse(0, 0, pa.size * 1.45, pa.size * 0.62, 0, 0, Math.PI * 2);
-            ctx.restore();
-          } else {
-            ctx.arc(pa.x, pa.y, pa.size, 0, Math.PI * 2);
-          }
-          ctx.fill();
+          ctx.arc(pa.x, pa.y, pa.size, 0, Math.PI * 2);
         }
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.shadowColor = 'transparent';
         ctx.globalAlpha = 1;
       });
 
@@ -2433,22 +2573,34 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ctx.globalAlpha = Math.max(0, Math.min(1, ft.life / 30));
         ctx.font = `bold ${ft.size}px "Space Mono", monospace`;
         ctx.textAlign = 'center';
+        ctx.fillStyle = ft.color;
         if (sceneQualityScaleRef.current >= 0.5) {
-          ctx.save();
           ctx.shadowColor = ft.color;
           ctx.shadowBlur = 6 * bloomStrength;
-          ctx.fillStyle = ft.color;
-          ctx.fillText(ft.text, ft.x, ft.y);
-          ctx.restore();
-        } else {
-          ctx.fillStyle = ft.color;
-          ctx.fillText(ft.text, ft.x, ft.y);
         }
+        ctx.fillText(ft.text, ft.x, ft.y);
+        ctx.shadowBlur = 0;
+        ctx.shadowColor = 'transparent';
         ctx.globalAlpha = 1;
       });
       ctx.restore();
 
       const stats = statsRef.current;
+      const gsHud = gameStateWasmRef.current;
+      const hudScore = gsHud ? Math.floor(gsHud.score()) : Math.floor(stats.score);
+      const hudDistance = gsHud ? gsHud.update_distance(pl.x) : stats.distance;
+      const hudEvidence = gsHud ? gsHud.evidence() : stats.evidence;
+      const hudNearMisses = gsHud ? gsHud.near_misses() : stats.nearMisses;
+      const hudCombo = gsHud ? gsHud.combo() : stats.combo;
+      const hudMultiplier = gsHud ? gsHud.multiplier() : stats.multiplier;
+      const hudHp = gsHud ? gsHud.hp() : pl.hp;
+      const hudMaxHp = gsHud ? gsHud.max_hp() : pl.maxHp;
+      // Sync player fields for other code that reads them
+      if (gsHud) {
+        pl.hp = gsHud.hp();
+        pl.panic = gsHud.panic();
+        pl.evidenceCollected = gsHud.evidence();
+      }
       ctx.textAlign = 'left';
       const hudX = 24;
       const hudY = 24;
@@ -2470,43 +2622,39 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       ctx.strokeStyle = 'rgba(125, 211, 252, 0.34)';
       ctx.lineWidth = 1;
       ctx.stroke();
-      ctx.shadowBlur = 0;
-      ctx.shadowColor = 'transparent';
+      ctx.shadowColor = 'rgba(34, 211, 238, 0.18)';
+      ctx.shadowBlur = 24;
+      ctx.strokeStyle = 'rgba(34, 211, 238, 0.12)';
+      ctx.stroke();
       ctx.restore();
-
+      ctx.save();
       if (sceneQualityScaleRef.current >= 0.5) {
-        ctx.save();
         ctx.shadowColor = '#FFD700';
         ctx.shadowBlur = 8;
-        ctx.fillStyle = '#FFD700';
-        ctx.font = 'bold 28px "Space Mono", monospace';
-        ctx.fillText(`${Math.floor(stats.score).toLocaleString()}`, 44, 62);
-        ctx.restore();
-      } else {
-        ctx.fillStyle = '#FFD700';
-        ctx.font = 'bold 28px "Space Mono", monospace';
-        ctx.fillText(`${Math.floor(stats.score).toLocaleString()}`, 44, 62);
       }
-
+      ctx.fillStyle = '#FFD700';
+      ctx.font = 'bold 28px "Space Mono", monospace';
+      ctx.fillText(`${hudScore.toLocaleString()}`, 44, 62);
+      ctx.restore();
       ctx.fillStyle = '#dbeafe';
       ctx.font = 'bold 12px "Space Mono", monospace';
-      ctx.fillText(`${t('hud_distance')} ${getDistanceMeters(stats.distance)}m`, 44, 86);
-      ctx.fillText(`${t('hud_data')} ${stats.evidence}`, 164, 86);
-      ctx.fillText(`${t('hud_near')} ${stats.nearMisses}`, 254, 86);
+      ctx.fillText(`${t('hud_distance')} ${getDistanceMeters(hudDistance)}m`, 44, 86);
+      ctx.fillText(`${t('hud_data')} ${hudEvidence}`, 164, 86);
+      ctx.fillText(`${t('hud_near')} ${hudNearMisses}`, 254, 86);
       ctx.fillStyle = 'rgba(255,255,255,0.11)';
       ctx.fillRect(44, 106, 232, 12);
-      ctx.fillStyle = pl.hp < 35 ? '#ff3355' : COLORS.hpBarPlayer;
-      ctx.fillRect(44, 106, 232 * (pl.hp / pl.maxHp), 12);
+      ctx.fillStyle = hudHp < 35 ? '#ff3355' : COLORS.hpBarPlayer;
+      ctx.fillRect(44, 106, 232 * (hudHp / hudMaxHp), 12);
       ctx.fillStyle = '#dbeafe';
-      ctx.fillText(`${t('hud_hp')} ${Math.ceil(pl.hp)}/${pl.maxHp}`, 44, 101);
+      ctx.fillText(`${t('hud_hp')} ${Math.ceil(hudHp)}/${hudMaxHp}`, 44, 101);
       ctx.fillStyle = 'rgba(255,255,255,0.11)';
       ctx.fillRect(44, 136, 232, 8);
-      const comboRemain = stats.combo > 0 ? Math.max(0, 1 - (Date.now() - stats.lastComboAt) / COMBO_WINDOW_MS) : 0;
+      const comboRemain = hudCombo > 0 ? Math.max(0, 1 - (Date.now() - stats.lastComboAt) / COMBO_WINDOW_MS) : 0;
       ctx.fillStyle = '#ffb703';
       ctx.fillRect(44, 136, 232 * comboRemain, 8);
-      ctx.fillStyle = stats.combo > 0 ? '#ffb703' : '#64748b';
+      ctx.fillStyle = hudCombo > 0 ? '#ffb703' : '#64748b';
       ctx.font = 'bold 16px "Space Mono", monospace';
-      ctx.fillText(`${t('hud_combo')} x${stats.combo}  ${t('hud_mult')} ${stats.multiplier.toFixed(2)}`, 44, 166);
+      ctx.fillText(`${t('hud_combo')} x${hudCombo}  ${t('hud_mult')} ${hudMultiplier.toFixed(2)}`, 44, 166);
       if (pl.shieldTime > 0 || pl.magnetTime > 0) {
         ctx.fillStyle = '#66f2c2';
         ctx.font = 'bold 12px "Space Mono", monospace';
@@ -2562,11 +2710,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       <div className="text-cyan-500 font-mono text-2xl animate-pulse tracking-widest uppercase">{t('loading_init')}</div>
       <div className="w-64 h-2 bg-slate-800 rounded-full overflow-hidden relative">
         <div className="absolute inset-0 bg-cyan-500/30 animate-[shimmer_2s_infinite]"></div>
-        <div className="h-full bg-cyan-500 shadow-[0_0_10px_#06b6d4] transition-all duration-500" style={{ width: '60%' }}></div>
+        <div className="h-full bg-cyan-500 shadow-[0_0_10px_#06b6d4] transition-[width] duration-200" style={{ width: `${Math.round(loadProgress * 100)}%` }}></div>
       </div>
-      <div className="text-slate-500 font-mono text-xs animate-pulse">{t('loading_sync')}</div>
+      <div className="text-slate-400 font-mono text-xs">{Math.round(loadProgress * 100)}% · {t('loading_sync')}</div>
     </div>
   );
 
-  return <canvas ref={canvasRef} width={dims.width} height={dims.height} onPointerDown={handleCanvasPointerDown} className="block w-full h-full bg-[#050510]" />;
+  const renderDims = getRenderDims(dims);
+  return (
+    <canvas ref={canvasRef} width={renderDims.width} height={renderDims.height} onPointerDown={handleCanvasPointerDown} className="block w-full h-full bg-[#050510]" />
+  );
 };

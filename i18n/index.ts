@@ -57,6 +57,8 @@ const resources = {
       action: '行动',
       dash: '冲刺',
       attack: '攻击',
+      portrait_rotate: '请横屏游玩',
+      portrait_hint: '游戏会在横屏后加载，以避免竖屏下的性能问题。',
 
       // 登录 / 注册
       auth_modal_title: '账号',
@@ -202,7 +204,7 @@ const resources = {
       title_long_distance: "远距调查员",
       title_evidence_hunter: "证据猎手",
       title_trainee: "见习调查员",
-      loading_init: "Initializing CAT_NET...",
+      loading_init: "正在初始化 CAT_NET...",
       loading_sync: "正在同步现实世界与猫星通讯...",
     },
   },
@@ -255,6 +257,8 @@ const resources = {
       action: 'Action',
       dash: 'Dash',
       attack: 'Attack',
+      portrait_rotate: 'Rotate to landscape',
+      portrait_hint: 'The game will load in landscape to avoid performance issues in portrait mode.',
 
       auth_modal_title: 'Account',
       register_tab: 'Register',
@@ -442,6 +446,8 @@ const resources = {
       action: 'アクション',
       dash: 'ダッシュ',
       attack: '攻撃',
+      portrait_rotate: '横向きにしてプレイしてください',
+      portrait_hint: '縦向きでのパフォーマンス低下を防ぐため、ゲームは横向きになってから読み込まれます。',
 
       auth_modal_title: 'アカウント',
       register_tab: '登録',

@@ -5,6 +5,9 @@ import { DialogBox } from './components/DialogBox';
 import { GameState, LeaderboardEntry, NpcChatSession, RunSummary, TouchInput } from './types';
 import { LYRICS, IDLE_SPRITE_URLS } from './constants';
 import { gameAudio } from './utils/audioSystem';
+import { initCodeIntegrity, getCodeHash } from './utils/codeIntegrity';
+import { startAntiDebug, stopAntiDebug, getTamperFlags } from './utils/antiDebug';
+import { apiUrl } from './utils/apiBase';
 import { useTranslation } from 'react-i18next';
 import './i18n';
 import {
@@ -1004,7 +1007,7 @@ const NpcChatBox: React.FC<{
 
   return (
     <div
-      className={`absolute z-40 pointer-events-auto pixel-font ${isMiku ? 'w-[min(340px,calc(100vw-24px))]' : 'w-[min(280px,calc(100vw-24px))]'}`}
+      className={`absolute z-20 pointer-events-auto pixel-font ${isMiku ? 'w-[min(340px,calc(100vw-24px))]' : 'w-[min(280px,calc(100vw-24px))]'}`}
       style={bubbleStyle}
     >
       <div className="relative game-panel-strong text-slate-50 rounded-lg px-3 py-2">
@@ -1103,7 +1106,7 @@ const TypewriterEffect: React.FC<{ text: string[], onComplete: () => void }> = (
   };
 
   return (
-    <div onClick={handleClick} className="font-mono text-emerald-200 text-sm md:text-base leading-relaxed p-6 intro-terminal rounded-lg cursor-pointer transition-colors">
+    <div onClick={handleClick} className="max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain font-mono text-emerald-200 text-sm md:text-base leading-relaxed p-4 md:p-6 intro-terminal rounded-lg cursor-pointer transition-colors">
       {displayedLines.map((line, i) => <div key={i} className="min-h-[1.5em]">{line}</div>)}
       {!isFinished && <span className="inline-block w-2 h-4 bg-emerald-300 animate-pulse ml-1"></span>}
       <div className="text-right text-xs text-emerald-400/70 mt-4 animate-pulse">
@@ -1122,6 +1125,16 @@ const isPhoneOrIpad = () => {
   const isIpad = /iPad/i.test(ua) || (platform === 'MacIntel' && maxTouchPoints > 1);
   return maxTouchPoints > 0 && (isPhone || isIpad);
 };
+
+const isPortraitViewport = () => {
+  if (typeof window === 'undefined') return false;
+  const viewport = window.visualViewport;
+  const width = viewport?.width ?? window.innerWidth;
+  const height = viewport?.height ?? window.innerHeight;
+  return height > width;
+};
+
+const LANDSCAPE_SETTLE_DELAY_MS = 450;
 
 const isSafariBrowser = () => {
   if (typeof navigator === 'undefined') return false;
@@ -1164,10 +1177,13 @@ const App: React.FC = () => {
   const [isRunMusicReady, setIsRunMusicReady] = useState<boolean>(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [isMobile, setIsMobile] = useState<boolean>(false);
+  const [isPortrait, setIsPortrait] = useState<boolean>(isPortraitViewport);
+  const [isLandscapeStable, setIsLandscapeStable] = useState<boolean>(() => !isPortraitViewport());
   const [activeNpcChat, setActiveNpcChat] = useState<ActiveNpcChat | null>(null);
   const [dismissedMikuIds, setDismissedMikuIds] = useState<Set<number>>(() => new Set());
   const [isCursorIdleHidden, setIsCursorIdleHidden] = useState<boolean>(false);
   const appShellRef = useRef<HTMLDivElement | null>(null);
+  const mobileControlsRef = useRef<HTMLDivElement | null>(null);
   const cursorIdleTimerRef = useRef<number | null>(null);
   const lyricCacheRef = useRef<Map<string, LyricLookupResult>>(new Map());
   const songContextTurnRef = useRef(0);
@@ -1195,6 +1211,12 @@ const App: React.FC = () => {
     document.documentElement.lang = currentLang;
   }, [currentLang]);
 
+  useEffect(() => {
+    void initCodeIntegrity();
+    startAntiDebug();
+    return () => stopAntiDebug();
+  }, []);
+
   const authHeaders = (extra: Record<string, string> = {}) => ({
     ...extra,
     ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
@@ -1202,7 +1224,7 @@ const App: React.FC = () => {
 
   const fetchGlobalLeaderboard = useCallback(async () => {
     try {
-      const res = await fetch('/api/leaderboard', { headers: authHeaders() });
+      const res = await fetch(apiUrl('/api/leaderboard'), { headers: authHeaders() });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json() as { entries?: GlobalLeaderboardEntry[]; viewerBest?: GlobalLeaderboardEntry | null };
       setGlobalLeaderboard(Array.isArray(data.entries) ? data.entries.slice(0, 50) : []);
@@ -1235,7 +1257,7 @@ const App: React.FC = () => {
     let cancelled = false;
     const loadMe = async () => {
       try {
-        const res = await fetch('/api/auth/me', { headers: authHeaders() });
+        const res = await fetch(apiUrl('/api/auth/me'), { headers: authHeaders() });
         const data = await res.json() as { user?: AuthUser | null };
         if (cancelled) return;
         if (res.ok && data.user) setAuthUser(data.user);
@@ -1307,14 +1329,14 @@ const App: React.FC = () => {
     try {
       let pow: { nonce: string; answer: string } | undefined;
       if (authMode === 'register') {
-        const challengeRes = await fetch('/api/auth/challenge', { method: 'POST' });
+        const challengeRes = await fetch(apiUrl('/api/auth/challenge'), { method: 'POST' });
         const challenge = await challengeRes.json() as { nonce: string; difficulty: number; error?: string };
         if (!challengeRes.ok) throw new Error(challenge.error || 'CHALLENGE_FAILED');
         const answer = await solvePow(challenge.nonce, challenge.difficulty);
         pow = { nonce: challenge.nonce, answer };
       }
 
-      const res = await fetch(`/api/auth/${authMode}`, {
+      const res = await fetch(apiUrl(`/api/auth/${authMode}`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: authUsername, password: authPassword, pow }),
@@ -1342,7 +1364,7 @@ const App: React.FC = () => {
   };
 
   const logout = async () => {
-    if (authToken) void fetch('/api/auth/logout', { method: 'POST', headers: authHeaders() }).catch(() => {});
+    if (authToken) void fetch(apiUrl('/api/auth/logout'), { method: 'POST', headers: authHeaders() }).catch(() => {});
     setAuthToken(null);
     setAuthUser(null);
     setViewerLeaderboardEntry(null);
@@ -1355,7 +1377,7 @@ const App: React.FC = () => {
   };
 
   const recordRun = (summary: RunSummary) => {
-    setLastRunSummary(summary);
+    setLastRunSummary({ ...summary, codeHash: getCodeHash(), tamperFlags: getTamperFlags() });
   };
 
   const submitGlobalScore = async (tokenOverride?: string) => {
@@ -1369,7 +1391,7 @@ const App: React.FC = () => {
     setUploadAttemptedRunToken(currentRunToken);
     setAuthMessage(t('uploading_score'));
     try {
-      const res = await fetch('/api/leaderboard/submit', {
+      const res = await fetch(apiUrl('/api/leaderboard/submit'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1406,15 +1428,51 @@ const App: React.FC = () => {
   }, [isGameOver, authToken, lastRunSummary, currentRunToken, uploadedScoreId, uploadBusy, uploadAttemptedRunToken]);
 
   useEffect(() => {
-    const checkDevice = () => {
-      setIsMobile(isPhoneOrIpad());
+    let landscapeSettleTimer: number | null = null;
+    let isWaitingForLandscapeToSettle = isPortraitViewport();
+
+    const clearLandscapeSettleTimer = () => {
+      if (landscapeSettleTimer === null) return;
+      window.clearTimeout(landscapeSettleTimer);
+      landscapeSettleTimer = null;
     };
-    checkDevice();
-    window.addEventListener('resize', checkDevice);
-    window.visualViewport?.addEventListener('resize', checkDevice);
+
+    const checkDevice = (waitForStableLandscape: boolean) => {
+      const isCurrentlyPortrait = isPortraitViewport();
+      setIsMobile(isPhoneOrIpad());
+      setIsPortrait(isCurrentlyPortrait);
+
+      if (isCurrentlyPortrait) {
+        clearLandscapeSettleTimer();
+        isWaitingForLandscapeToSettle = true;
+        setIsLandscapeStable(false);
+        return;
+      }
+
+      if (!waitForStableLandscape || !isWaitingForLandscapeToSettle) {
+        setIsLandscapeStable(true);
+        return;
+      }
+
+      clearLandscapeSettleTimer();
+      setIsLandscapeStable(false);
+      landscapeSettleTimer = window.setTimeout(() => {
+        landscapeSettleTimer = null;
+        if (isPortraitViewport()) return;
+        isWaitingForLandscapeToSettle = false;
+        setIsLandscapeStable(true);
+      }, LANDSCAPE_SETTLE_DELAY_MS);
+    };
+
+    const handleViewportResize = () => checkDevice(true);
+
+    checkDevice(false);
+    window.addEventListener('resize', handleViewportResize);
+    window.visualViewport?.addEventListener('resize', handleViewportResize);
     return () => {
-      window.removeEventListener('resize', checkDevice);
-      window.visualViewport?.removeEventListener('resize', checkDevice);
+      clearLandscapeSettleTimer();
+      window.removeEventListener('resize', handleViewportResize);
+      window.visualViewport?.removeEventListener('resize', handleViewportResize);
     };
   }, []);
 
@@ -1424,14 +1482,13 @@ const App: React.FC = () => {
   }, [isMobile, gameState]);
 
   useEffect(() => {
-    if (safariCompatMode && gameState === 'MENU') return;
     gameAudio.setMusic('/audio/bgm.mp3', { loop: true });
     const cleanupUnlock = gameAudio.installGestureUnlock();
     return () => {
       cleanupUnlock();
       gameAudio.stopMusic({ reset: true });
     };
-  }, [gameState, safariCompatMode]);
+  }, []);
 
   useEffect(() => {
     gameAudio.setVolumes({ master: masterVolume, sfx: sfxVolume, music: musicVolume });
@@ -1458,7 +1515,7 @@ const App: React.FC = () => {
     gameAudio.stopMusic({ reset: true });
     setGameState('PLAYING');
     setDialogLines([]);
-    void fetch('/api/runs/start', { method: 'POST', headers: authHeaders() })
+    void fetch(apiUrl('/api/runs/start'), { method: 'POST', headers: authHeaders() })
       .then((res) => res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`)))
       .then((data: { runToken?: string }) => {
         if (data.runToken) setCurrentRunToken(data.runToken);
@@ -1473,7 +1530,7 @@ const App: React.FC = () => {
     const prepared = prepareMikuMemoryEndRequest(chat.messages, chat.memoryScope);
     if (!prepared) return;
 
-    void fetch('/api/miku-chat/end', {
+    void fetch(apiUrl('/api/miku-chat/end'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(prepared.request),
@@ -1567,7 +1624,7 @@ const App: React.FC = () => {
     const cached = lyricCacheKeysForSong(song).map((key) => lyricCacheRef.current.get(key)).find(Boolean);
     if (cached && (!options.includeFullLyrics || hasFullLyricContext(cached))) return cached;
     try {
-      const res = await fetch('/api/vocaloid-lyrics', {
+      const res = await fetch(apiUrl('/api/vocaloid-lyrics'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query: [song.name, song.additionalNames, song.artistString].filter(Boolean).join(' '), song, includeFullLyrics: Boolean(options.includeFullLyrics) }),
@@ -1649,7 +1706,7 @@ const App: React.FC = () => {
         continue;
       }
       try {
-        const res = await fetch('/api/vocaloid-lyrics', {
+        const res = await fetch(apiUrl('/api/vocaloid-lyrics'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ query, includeFullLyrics: Boolean(options.includeFullLyrics) }),
@@ -1688,7 +1745,7 @@ const App: React.FC = () => {
       const initialLyricContexts = (wantsLyricsNow || isSongDiscussion) ? lyricsForLookups(passiveLookups) : [];
       const memoryScope = activeNpcChat.memoryScope ?? mikuMemoryScopeForAccount(authUser?.id);
       const memoryBrief = buildMikuMemoryBrief(memoryScope);
-      const res = await fetch('/api/miku-chat', {
+      const res = await fetch(apiUrl('/api/miku-chat'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: nextMessages, passiveVocaloidLookups: passiveLookups, lyricContexts: initialLyricContexts, memoryBrief }),
@@ -1698,7 +1755,7 @@ const App: React.FC = () => {
       if (data.action === 'memory_search' && Array.isArray(data.queries) && data.queries.length > 0) {
         const memorySearchResults = data.queries.flatMap((query) => searchMikuTopicMemory(query, memoryScope));
         const uniqueMemorySearchResults = [...new Map(memorySearchResults.map((result) => [`${result.sessionId}:${result.topicId}`, result])).values()].slice(0, 3);
-        const finalRes = await fetch('/api/miku-chat', {
+        const finalRes = await fetch(apiUrl('/api/miku-chat'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ messages: nextMessages, passiveVocaloidLookups: passiveLookups, lyricContexts: initialLyricContexts, memoryBrief, memorySearchResults: uniqueMemorySearchResults }),
@@ -1713,7 +1770,7 @@ const App: React.FC = () => {
         const combinedLookups = mergeLookupLists(lookups, passiveLookups, getRecentSongLookups(currentSongTurn));
         await prefetchLyricsForLookups(combinedLookups);
         const lyricContexts = (wantsLyricsNow || isSongDiscussion) ? lyricsForLookups(combinedLookups) : [];
-        const finalRes = await fetch('/api/miku-chat', {
+        const finalRes = await fetch(apiUrl('/api/miku-chat'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ messages: nextMessages, vocaloidLookups: lookups, passiveVocaloidLookups: combinedLookups, lyricContexts, memoryBrief }),
@@ -1724,7 +1781,7 @@ const App: React.FC = () => {
         else throw new Error(finalData.error || 'EMPTY_REPLY');
       } else if ((data.action === 'vocaloid_lyrics' || data.action === 'vocaloid_full_lyrics') && Array.isArray(data.queries) && data.queries.length > 0) {
         const lyricContexts = await fetchLyricsForQueries(data.queries, passiveLookups, { includeFullLyrics: data.action === 'vocaloid_full_lyrics' });
-        const finalRes = await fetch('/api/miku-chat', {
+        const finalRes = await fetch(apiUrl('/api/miku-chat'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ messages: nextMessages, passiveVocaloidLookups: passiveLookups, lyricContexts, memoryBrief }),
@@ -1777,6 +1834,26 @@ const App: React.FC = () => {
   const preventCtx = (e: React.MouseEvent | React.TouchEvent) => { e.preventDefault(); e.stopPropagation(); };
   const canAutoHideCursor = gameState === 'PLAYING' && !isSettingsOpen && !activeNpcChat;
   const shouldHideCursor = canAutoHideCursor && isCursorIdleHidden;
+
+  useEffect(() => {
+    const controls = mobileControlsRef.current;
+    if (!controls || gameState !== 'PLAYING' || !isMobile) return;
+
+    const preventNativeSelection = (event: Event) => {
+      event.preventDefault();
+    };
+    const nonPassiveOptions: AddEventListenerOptions = { passive: false };
+    const blockedEvents = ['touchstart', 'touchmove', 'contextmenu', 'selectstart', 'dragstart'] as const;
+
+    blockedEvents.forEach((eventName) => {
+      controls.addEventListener(eventName, preventNativeSelection, nonPassiveOptions);
+    });
+    return () => {
+      blockedEvents.forEach((eventName) => {
+        controls.removeEventListener(eventName, preventNativeSelection, nonPassiveOptions);
+      });
+    };
+  }, [gameState, isMobile]);
 
   useEffect(() => {
     const clearCursorTimer = () => {
@@ -1834,16 +1911,24 @@ const App: React.FC = () => {
 
   const displayedGlobalLeaderboard = globalLeaderboard.slice(0, 50);
   const viewerIsInTopList = !!viewerLeaderboardEntry && displayedGlobalLeaderboard.some((entry) => entry.id === viewerLeaderboardEntry.id);
-  const shouldMountGameCanvas = gameState !== 'MENU';
+  const shouldMountGameCanvas = gameState !== 'MENU' && !isPortrait && isLandscapeStable;
 
   return (
     <div ref={appShellRef} className={`fixed inset-0 bg-[#050510] overflow-hidden font-mono selection:bg-cyan-500 selection:text-black ${shouldHideCursor ? 'cursor-none' : 'cursor-auto'}`}>
       {shouldHideCursor && <style>{'* { cursor: none !important; }'}</style>}
       <button aria-label={t('settings_title')} onClick={() => setIsSettingsOpen(true)} className="absolute top-5 right-5 z-50 h-11 w-11 rounded-full game-panel text-white text-lg hover:border-cyan-300/70 transition-all active:scale-95">⚙</button>
 
+      {isPortrait && (
+        <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center gap-5 bg-[#050510] p-8 text-center text-white">
+          <div className="text-6xl" aria-hidden="true">↻</div>
+          <h1 className="pixel-font text-2xl font-bold text-cyan-200">{t('portrait_rotate')}</h1>
+          <p className="max-w-sm text-sm leading-6 text-slate-300">{t('portrait_hint')}</p>
+        </div>
+      )}
+
       {isSettingsOpen && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/90 p-4">
-          <div className="game-panel-strong p-6 md:p-8 rounded-lg w-full max-w-sm text-white">
+        <div className="fixed inset-0 z-[60] flex items-start md:items-center justify-center overflow-y-auto bg-slate-950/90 p-3 md:p-4">
+          <div className="game-panel-strong my-auto max-h-[calc(100dvh-1.5rem)] overflow-y-auto p-4 md:p-8 rounded-lg w-full max-w-sm text-white">
             <h2 className="text-2xl font-bold mb-7 pixel-font text-center text-cyan-200">{t('settings_title')}</h2>
             <div className="mb-7">
               <label className="text-slate-300 text-sm font-bold mb-3 flex justify-between">
@@ -1939,9 +2024,9 @@ const App: React.FC = () => {
       )}
 
       {gameState === 'MENU' && (
-        <div className="absolute inset-0 main-menu-screen flex flex-col items-center justify-center text-center p-4 z-40">
+        <div className="absolute inset-0 main-menu-screen flex flex-col items-center justify-center overflow-y-auto text-center p-4 z-40">
           {isGameOver ? (
-             <div className="animate-in fade-in zoom-in duration-500 flex flex-col items-center gap-6 w-full max-w-4xl">
+             <div className="animate-in fade-in zoom-in duration-500 flex min-h-full flex-col items-center justify-start gap-4 md:gap-6 w-full max-w-4xl py-6">
                <h1 className="text-5xl md:text-7xl text-cyan-100 font-bold pixel-font drop-shadow-[0_0_30px_rgba(34,211,238,0.42)]">{t('game_over_title')}</h1>
                {lastRunSummary && (
                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 w-full">
@@ -1964,7 +2049,7 @@ const App: React.FC = () => {
                  </div>
                )}
                <div className="grid md:grid-cols-[0.85fr_1.15fr] gap-4 w-full">
-                 <div className="game-panel rounded-lg p-4 text-left">
+                 <div className="game-panel flex flex-col rounded-lg p-4 text-left">
                    <h2 className="text-cyan-300 font-bold mb-3">{t('local_score_title')}</h2>
                    <div className="text-sm text-slate-300">{t('score')}</div>
                    <div className="text-4xl text-yellow-300 font-bold mb-3">{lastRunSummary?.score.toLocaleString() ?? '0'}</div>
@@ -1974,18 +2059,24 @@ const App: React.FC = () => {
                        <div className="text-sm text-yellow-200">
                          {uploadedScoreId ? t('already_uploaded') : uploadBusy ? t('uploading') : t('waiting_upload')}
                        </div>
-                       {!uploadedScoreId && !uploadBusy && (
-                         <button onClick={() => void submitGlobalScore()} className="px-4 py-2 bg-yellow-400 text-slate-950 font-bold rounded-md hover:bg-yellow-300 transition-colors">{t('reupload')}</button>
-                       )}
-                       <button onClick={logout} className="px-4 py-2 game-button-secondary rounded-md">{t('logout')}</button>
                      </div>
                    ) : (
-                     <div className="space-y-3">
-                       <p className="text-sm text-slate-300">{t('login_prompt')}</p>
-                       <button onClick={() => { setAuthMode('register'); setIsAuthModalOpen(true); }} className="px-4 py-2 game-button text-white font-bold rounded-md">{t('login_register_btn')}</button>
-                     </div>
+                     <p className="text-sm text-slate-300">{t('login_prompt')}</p>
                    )}
                    {authMessage && <div className="mt-3 text-xs text-yellow-200">{authMessage}</div>}
+                   <div className="mt-auto flex flex-wrap gap-2 pt-6">
+                     {authUser ? (
+                       <>
+                         {!uploadedScoreId && !uploadBusy && (
+                           <button onClick={() => void submitGlobalScore()} className="px-4 py-2 bg-yellow-400 text-slate-950 font-bold rounded-md hover:bg-yellow-300 transition-colors">{t('reupload')}</button>
+                         )}
+                         <button onClick={logout} className="px-4 py-2 game-button-secondary rounded-md">{t('logout')}</button>
+                       </>
+                     ) : (
+                       <button onClick={() => { setAuthMode('register'); setIsAuthModalOpen(true); }} className="px-4 py-2 game-button text-white font-bold rounded-md">{t('login_register_btn')}</button>
+                     )}
+                     <button onClick={startRun} className="px-4 py-2 bg-yellow-400 text-slate-950 font-bold rounded-md hover:bg-yellow-300 transition-colors">{t('retry')}</button>
+                   </div>
                  </div>
 
                  <div className="game-panel rounded-lg p-4 w-full">
@@ -2004,22 +2095,23 @@ const App: React.FC = () => {
                    <div className="grid grid-cols-[48px_1fr_90px_80px] gap-2 text-xs text-slate-400 px-2 pb-2 border-b border-slate-800">
                      <span>#</span><span>{t('player')}</span><span>{t('score')}</span><span>{t('distance')}</span>
                    </div>
-                   {displayedGlobalLeaderboard.length === 0 ? (
-                     <div className="text-slate-500 py-6">{t('no_global_records')}</div>
-                   ) : displayedGlobalLeaderboard.map((entry) => {
-                     const isViewerEntry = !!authUser && entry.userId === authUser.id;
-                     return (
-                     <div key={entry.id} className={`grid grid-cols-[48px_1fr_90px_80px] gap-2 text-sm px-2 py-2 border-b border-slate-900 ${isViewerEntry ? 'bg-cyan-950/60 text-cyan-50 ring-1 ring-cyan-500/70' : 'text-white'}`}>
-                       <span className="text-yellow-300">{entry.rank}</span>
-                       <span className={isViewerEntry ? 'font-bold text-cyan-100' : ''}>{entry.playerName}</span>
-                       <span>{entry.score.toLocaleString()}</span>
-                       <span>{entry.distance}m</span>
-                     </div>
-                     );
-                   })}
+                   <div className="max-h-[min(42dvh,360px)] overflow-y-auto overscroll-contain">
+                     {displayedGlobalLeaderboard.length === 0 ? (
+                       <div className="text-slate-500 py-6">{t('no_global_records')}</div>
+                     ) : displayedGlobalLeaderboard.map((entry) => {
+                       const isViewerEntry = !!authUser && entry.userId === authUser.id;
+                       return (
+                       <div key={entry.id} className={`grid grid-cols-[48px_1fr_90px_80px] gap-2 text-sm px-2 py-2 border-b border-slate-900 ${isViewerEntry ? 'bg-cyan-950/60 text-cyan-50 ring-1 ring-cyan-500/70' : 'text-white'}`}>
+                         <span className="text-yellow-300">{entry.rank}</span>
+                         <span className={isViewerEntry ? 'font-bold text-cyan-100' : ''}>{entry.playerName}</span>
+                         <span>{entry.score.toLocaleString()}</span>
+                         <span>{entry.distance}m</span>
+                       </div>
+                       );
+                     })}
+                   </div>
                  </div>
                </div>
-               <button onClick={startRun} className="px-16 py-5 game-button font-bold pixel-font text-white text-xl rounded-md">{t('retry')}</button>
              </div>
           ) : (
             !introComplete ? <TypewriterEffect key={currentLang} text={LYRICS.intro.map((line) => t(line))} onComplete={() => setIntroComplete(true)} /> : (
@@ -2086,7 +2178,7 @@ const App: React.FC = () => {
       )}
 
       {gameState === 'PLAYING' && isMobile && (
-        <div className="absolute inset-0 pointer-events-none z-30 touch-none select-none [-webkit-tap-highlight-color:transparent]">
+        <div ref={mobileControlsRef} className="mobile-touch-controls absolute inset-0 pointer-events-none z-30 touch-none select-none [-webkit-tap-highlight-color:transparent]">
           <div className="absolute bottom-8 left-7 w-44 h-44 pointer-events-auto opacity-70 active:opacity-95 transition-opacity">
               <button aria-label={t('jump')} className="absolute top-0 left-1/3 w-1/3 h-1/3 rounded-t-2xl touch-control-button" onTouchStart={(e) => handleTouchStart('up', e)} onTouchEnd={(e) => handleTouchEnd('up', e)} onTouchCancel={(e) => handleTouchEnd('up', e)} onContextMenu={preventCtx}>▲</button>
               <button aria-label={t('crouch')} className="absolute bottom-0 left-1/3 w-1/3 h-1/3 rounded-b-2xl touch-control-button" onTouchStart={(e) => handleTouchStart('down', e)} onTouchEnd={(e) => handleTouchEnd('down', e)} onTouchCancel={(e) => handleTouchEnd('down', e)} onContextMenu={preventCtx}>▼</button>
@@ -2096,7 +2188,7 @@ const App: React.FC = () => {
           <div className="absolute bottom-8 right-7 flex gap-4 pointer-events-auto opacity-75 active:opacity-100 transition-opacity items-end text-white">
              <button aria-label={t('interact')} className="w-16 h-16 rounded-full touch-control-button font-bold text-lg flex items-center justify-center mb-10 text-yellow-100" onTouchStart={(e) => handleTouchStart('interact', e)} onTouchEnd={(e) => handleTouchEnd('interact', e)} onTouchCancel={(e) => handleTouchEnd('interact', e)} onContextMenu={preventCtx}>E</button>
              <div className="flex flex-col gap-5">
-               <button aria-label={t('action')} className="w-24 h-24 rounded-full touch-control-button font-bold text-3xl flex items-center justify-center text-cyan-50" onTouchStart={(e) => handleTouchStart('action', e)} onTouchEnd={(e) => handleTouchEnd('action', e)} onTouchCancel={(e) => handleTouchEnd('action', e)} onContextMenu={preventCtx}>●</button>
+               <button aria-label={t('jump')} className="w-24 h-24 rounded-full touch-control-button font-bold text-3xl flex items-center justify-center text-cyan-50" onTouchStart={(e) => handleTouchStart('up', e)} onTouchEnd={(e) => handleTouchEnd('up', e)} onTouchCancel={(e) => handleTouchEnd('up', e)} onContextMenu={preventCtx}>跳</button>
                <div className="flex gap-4">
                  <button aria-label={t('dash')} className="w-20 h-20 rounded-full touch-control-button font-bold text-xl flex items-center justify-center text-blue-100" onTouchStart={(e) => handleTouchStart('dash', e)} onTouchEnd={(e) => handleTouchEnd('dash', e)} onTouchCancel={(e) => handleTouchEnd('dash', e)} onContextMenu={preventCtx}>D</button>
                  <button aria-label={t('attack')} className="w-20 h-20 rounded-full touch-control-button font-bold text-xl flex items-center justify-center text-rose-100" onTouchStart={(e) => handleTouchStart('attack', e)} onTouchEnd={(e) => handleTouchEnd('attack', e)} onTouchCancel={(e) => handleTouchEnd('attack', e)} onContextMenu={preventCtx}>F</button>

@@ -15,6 +15,42 @@ body {
   font-family: var(--font-mono);
 }
 
+/* 禁止选中文本 / 长按弹出菜单（游戏体验）；输入框除外，保证登录与聊天可正常输入 */
+html, body, #root, #root * {
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+input, textarea, [contenteditable="true"] {
+  -webkit-user-select: text;
+  -moz-user-select: text;
+  user-select: text;
+}
+
+@media (pointer: coarse) {
+  input, textarea, [contenteditable="true"] {
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+  }
+
+  img {
+    -webkit-user-drag: none;
+  }
+}
+
+.mobile-touch-controls,
+.mobile-touch-controls * {
+  -webkit-touch-callout: none !important;
+  -webkit-user-select: none !important;
+  user-select: none !important;
+  -webkit-user-drag: none !important;
+  touch-action: none !important;
+}
+
 .pixel-font {
   font-family: var(--font-mono);
   letter-spacing: 0;
