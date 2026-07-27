@@ -1,7 +1,7 @@
-import { createServer } from 'node:http';
 import { createReadStream, existsSync, statSync, readFileSync } from 'node:fs';
 import { join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { EOL } from 'node:os';
 import { handleMikuChatEndRequest, handleMikuChatRequest } from './server/deepseek-miku.mjs';
 import { handleVocaloidLyricsRequest, handleVocaloidSearchRequest } from './server/vocaloid-knowledge.mjs';
 import { handleAuthRequest, handleLeaderboardRequest, handleMikuMemoryRequest, handleRunStartRequest } from './server/auth-leaderboard.mjs';
@@ -11,7 +11,23 @@ const distDir = join(root, 'dist');
 const port = Number(process.env.PORT || 3000);
 const host = process.env.HOST || '0.0.0.0';
 
-// ── Integrity manifest ──
+// Load .env file
+const envPath = join(root, '.env');
+if (existsSync(envPath)) {
+  const lines = readFileSync(envPath, 'utf8').split(EOL);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eq = trimmed.indexOf('=');
+    if (eq > 0) {
+      const key = trimmed.slice(0, eq).trim();
+      if (!process.env[key]) process.env[key] = trimmed.slice(eq + 1).trim();
+    }
+  }
+  console.log('[env] Loaded .env file');
+}
+
+// Integrity manifest
 let integrityManifest = null;
 const integrityPath = join(distDir, 'integrity.json');
 try {
@@ -19,20 +35,20 @@ try {
     integrityManifest = JSON.parse(readFileSync(integrityPath, 'utf8'));
     console.log(`[integrity] Loaded manifest v${integrityManifest.version}`);
   } else {
-    console.warn('[integrity] No integrity.json found — build with `npm run build` to generate');
+    console.warn('[integrity] No integrity.json found');
   }
 } catch (err) {
   console.warn('[integrity] Failed to load manifest:', err.message);
 }
 
-// Export for use by auth-leaderboard
 export const getIntegrityManifest = () => integrityManifest;
 
-// Fail-loud: the HMAC SECRET must be set in production. Without it, every restart
-// invalidates all sessions/runTokens and leaderboard submissions silently fail (F3).
+// Fail-loud: GAME_SERVER_SECRET must be set
 if (!process.env.GAME_SERVER_SECRET || process.env.GAME_SERVER_SECRET.length < 32) {
-  console.error('FATAL: GAME_SERVER_SECRET must be set to a random string of >= 32 chars.');
-  console.error('Generate one with:  node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"');
+  console.error('FATAL: GAME_SERVER_SECRET must be set to >= 32 chars.');
+  console.error('Create a .env file with: GAME_SERVER_SECRET=<your-key>');
+  console.error('Or set the environment variable before starting.');
+  console.error('Generate one: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"');
   process.exit(1);
 }
 
@@ -49,6 +65,8 @@ const contentTypeFor = (filePath) => {
   const ext = filePath.slice(filePath.lastIndexOf('.'));
   return mimeTypes[ext] || 'application/octet-stream';
 };
+
+import { createServer } from 'node:http';
 
 createServer(async (req, res) => {
   if (req.url?.startsWith('/api/miku-chat/end')) {
@@ -117,7 +135,6 @@ createServer(async (req, res) => {
         return;
       }
     }
-
     res.statusCode = 416;
     res.setHeader('Content-Range', `bytes */${fileStat.size}`);
     res.end();
@@ -128,5 +145,5 @@ createServer(async (req, res) => {
   res.setHeader('Content-Length', String(fileStat.size));
   createReadStream(filePath).pipe(res);
 }).listen(port, host, () => {
-  console.log(`Game server listening on http://${host}:${port}`);
+  console.log(`Server listening on http://${host}:${port}`);
 });

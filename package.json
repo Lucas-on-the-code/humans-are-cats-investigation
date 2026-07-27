@@ -59,6 +59,9 @@
       "electron/**/*",
       "package.json"
     ],
+    "extraResources": [
+      { "from": "electron/config.json", "to": "config.json" }
+    ],
     "asar": true,
     "win": {
       "target": "nsis"

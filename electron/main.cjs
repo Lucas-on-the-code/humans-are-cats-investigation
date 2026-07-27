@@ -6,9 +6,29 @@ const fs = require('fs');
 const { URL } = require('url');
 
 const PORT = 3001;
-const API_SERVER = process.env.API_SERVER || 'http://localhost:3000';
 const distDir = path.join(__dirname, '..', 'dist');
 const publicDir = path.join(__dirname, '..', 'public');
+
+// Load server address from config.json (next to .exe), with fallbacks
+function loadApiServer() {
+  const configPath = path.join(path.dirname(app.getPath('exe')), 'resources', 'config.json');
+  try {
+    if (fs.existsSync(configPath)) {
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      if (config.apiServer) {
+        console.log(`[config] API server: ${config.apiServer}`);
+        return config.apiServer;
+      }
+    }
+  } catch (e) {
+    console.warn('[config] Failed to read config.json:', e.message);
+  }
+  const fallback = process.env.API_SERVER || 'http://localhost:3000';
+  console.log(`[config] Using fallback API server: ${fallback}`);
+  return fallback;
+}
+
+let API_SERVER = 'http://localhost:3000';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -133,6 +153,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  API_SERVER = loadApiServer();
   server.listen(PORT, '127.0.0.1', () => {
     console.log(`Game: http://localhost:${PORT}  →  API: ${API_SERVER}`);
     createWindow();
