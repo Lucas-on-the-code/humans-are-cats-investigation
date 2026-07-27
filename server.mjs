@@ -1,7 +1,6 @@
 import { createReadStream, existsSync, statSync, readFileSync } from 'node:fs';
 import { join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { EOL } from 'node:os';
 import { handleMikuChatEndRequest, handleMikuChatRequest } from './server/deepseek-miku.mjs';
 import { handleVocaloidLyricsRequest, handleVocaloidSearchRequest } from './server/vocaloid-knowledge.mjs';
 import { handleAuthRequest, handleLeaderboardRequest, handleMikuMemoryRequest, handleRunStartRequest } from './server/auth-leaderboard.mjs';
@@ -14,17 +13,26 @@ const host = process.env.HOST || '0.0.0.0';
 // Load .env file
 const envPath = join(root, '.env');
 if (existsSync(envPath)) {
-  const lines = readFileSync(envPath, 'utf8').split(EOL);
+  let raw = readFileSync(envPath, 'utf8');
+  if (raw.charCodeAt(0) === 0xFEFF) raw = raw.slice(1); // strip BOM
+  const lines = raw.split(/
+?
+/);
+  const loaded = [];
   for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith('#')) continue;
     const eq = trimmed.indexOf('=');
     if (eq > 0) {
       const key = trimmed.slice(0, eq).trim();
-      if (!process.env[key]) process.env[key] = trimmed.slice(eq + 1).trim();
+      let value = trimmed.slice(eq + 1).trim();
+      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
+      }
+      if (!process.env[key]) { process.env[key] = value; loaded.push(key); }
     }
   }
-  console.log('[env] Loaded .env file');
+  console.log(`[env] Loaded .env file (keys: ${loaded.join(', ') || 'none'})`);
 }
 
 // Integrity manifest
