@@ -23,12 +23,12 @@ function loadApiServer() {
   } catch (e) {
     console.warn('[config] Failed to read config.json:', e.message);
   }
-  const fallback = process.env.API_SERVER || 'http://localhost:3000';
+  const fallback = process.env.API_SERVER || 'https://cats.renchengzhang.com/steam-api/';
   console.log(`[config] Using fallback API server: ${fallback}`);
   return fallback;
 }
 
-let API_SERVER = 'http://localhost:3000';
+let API_SERVER = 'https://cats.renchengzhang.com/steam-api/';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -58,7 +58,9 @@ const HOP_HEADERS = new Set([
 
 // Proxy API requests to the remote server
 function proxyApi(req, res) {
-  const targetUrl = new URL(req.url, API_SERVER);
+  const baseUrl = new URL(API_SERVER);
+  const targetPath = baseUrl.pathname.replace(/\/$/, '') + req.url;
+  const targetUrl = new URL(targetPath, API_SERVER);
   
   // Build clean headers for the upstream request
   const cleanHeaders = {};

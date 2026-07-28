@@ -765,7 +765,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       kind,
       speaker: isMiku ? t('npc_miku_name') : t(npc.labelKey),
       lines: [t(lineKey)],
-      isInvite: isMiku,
+      isInvite: false,
       image: isMiku ? MIKU_NPC_IMAGE : undefined,
       anchor: getNpcChatAnchor(npc),
       target: { type: 'npc', id: npc.id, kind },
@@ -819,37 +819,21 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const endRun = () => {
     if (endedRef.current) return;
     endedRef.current = true;
-    const gs = gameStateWasmRef.current;
-    if (!gs) {
-      // fallback: use old stats path if WASM not available
-      const stats = statsRef.current;
-      onGameOver({
-        score: Math.floor(stats.score),
-        distance: getDistanceMeters(stats.distance),
-        evidence: stats.evidence,
-        scans: stats.scans,
-        nearMisses: stats.nearMisses,
-        bestCombo: stats.bestCombo,
-        survivalTime: Math.floor((Date.now() - stats.startedAt) / 1000),
-        title: t('title_trainee'),
-      });
-      return;
-    }
-    const summary = gs.finalize_run(BigInt(Date.now())) as RunSummary & { integrity?: string };
-    // Resolve title i18n keys to display text
-    const titleMap: Record<string, string> = {
-      taxi_king: t('title_taxi_king'),
-      combo_frenzy: t('title_combo_frenzy'),
-      graze_master: t('title_graze_master'),
-      long_distance: t('title_long_distance'),
-      evidence_hunter: t('title_evidence_hunter'),
-      trainee: t('title_trainee'),
-    };
-    onGameOver({
-      ...summary,
-      title: titleMap[summary.title] || t('title_trainee'),
-      integrity: summary.integrity,
-    } as RunSummary & { integrity?: string });
+    const stats = statsRef.current;
+    const hasFreerideBonus = stats.taxiRides >= TAXI_FREERIDE_THRESHOLD;
+    const score = Math.floor(stats.score + (hasFreerideBonus ? TAXI_FREERIDE_BONUS : 0));
+    const title = hasFreerideBonus
+      ? t('title_taxi_king')
+      : stats.bestCombo >= 28
+        ? t('title_combo_frenzy')
+        : stats.nearMisses >= 8
+          ? t('title_graze_master')
+          : getDistanceMeters(stats.distance) >= 180
+            ? t('title_long_distance')
+            : stats.evidence >= 6
+              ? t('title_evidence_hunter')
+              : t('title_trainee');
+    onGameOver({ score, distance: getDistanceMeters(stats.distance), evidence: stats.evidence, scans: stats.scans, nearMisses: stats.nearMisses, bestCombo: stats.bestCombo, survivalTime: Math.floor((Date.now() - stats.startedAt) / 1000), title });
   };
 
   const makeNpc = (x: number, y: number, overrides: Partial<NPC> = {}): NPC => ({

@@ -18,7 +18,6 @@ import {
   mikuMemoryScopeForAccount,
   prepareMikuMemoryEndRequest,
   searchMikuTopicMemory,
-  syncAccountMikuMemoryFromServer,
 } from './utils/mikuMemory';
 import type { MikuMemoryEndResult } from './utils/mikuMemory';
 
@@ -1038,17 +1037,6 @@ const NpcChatBox: React.FC<{
               <button onClick={onDeclineInvite} className="px-3 py-1 game-button-secondary rounded-md text-xs font-bold">{t('npc_invite_wait')}</button>
               <button onClick={onStartChat} className="px-3 py-1 game-button rounded-md text-xs font-bold">{t('npc_invite_chat')}</button>
             </div>
-          ) : isMiku ? (
-            <form onSubmit={submit} className="flex gap-2">
-              <input
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                disabled={chat.isLoading}
-                className="min-w-0 flex-1 game-input rounded-md px-2 py-1 text-xs"
-                placeholder={t('npc_input_placeholder')}
-              />
-              <button disabled={chat.isLoading || !draft.trim()} className="px-3 py-1 game-button rounded-md text-white text-xs font-bold disabled:opacity-40">{t('npc_send')}</button>
-            </form>
           ) : (
             <button onClick={onClose} className="self-end text-cyan-200 hover:text-white px-1 py-0.5 text-xs animate-pulse font-bold">{t('npc_continue')}</button>
           )}
@@ -1274,17 +1262,7 @@ const App: React.FC = () => {
   }, [authToken, t]);
 
   useEffect(() => {
-    if (!authToken || !authUser?.id) return;
-    let cancelled = false;
-    const syncMikuMemory = async () => {
-      try {
-        await syncAccountMikuMemoryFromServer(authToken, authUser.id);
-      } catch {
-        if (!cancelled) setAuthMessage(t('miku_memory_sync_fail'));
-      }
-    };
-    void syncMikuMemory();
-    return () => { cancelled = true; };
+    // No-op: Miku memory sync removed
   }, [authToken, authUser?.id, t]);
 
   const sha256Hex = async (text: string) => {
@@ -1369,6 +1347,9 @@ const App: React.FC = () => {
     setAuthUser(null);
     setViewerLeaderboardEntry(null);
     setAuthMessage('');
+    setUploadedScoreId(null);
+    setUploadAttemptedRunToken(null);
+    setUploadBusy(false);
     try {
       localStorage.removeItem(AUTH_TOKEN_KEY);
     } catch {
@@ -1377,7 +1358,7 @@ const App: React.FC = () => {
   };
 
   const recordRun = (summary: RunSummary) => {
-    setLastRunSummary({ ...summary, codeHash: getCodeHash(), tamperFlags: getTamperFlags() });
+    setLastRunSummary(summary);
   };
 
   const submitGlobalScore = async (tokenOverride?: string) => {
@@ -1412,6 +1393,8 @@ const App: React.FC = () => {
         ? t('upload_already_submitted')
         : message === 'LOGIN_REQUIRED'
           ? t('upload_login_required')
+          : message === 'RUN_USER_MISMATCH'
+            ? t('upload_score_rejected')
           : message === 'SCORE_TOO_HIGH' || message === 'DISTANCE_TOO_HIGH' || message === 'TIME_TRAVEL'
             ? t('upload_score_rejected')
             : t('upload_fail_generic');
@@ -1503,8 +1486,7 @@ const App: React.FC = () => {
     return () => document.removeEventListener('visibilitychange', syncMusic);
   }, [gameState, isRunMusicReady]);
 
-  const startRun = () => {
-    setIsGameOver(false);
+  const startRun = async () => {
     setLastRunSummary(null);
     setCurrentRunToken(null);
     setUploadedScoreId(null);
@@ -1513,16 +1495,25 @@ const App: React.FC = () => {
     setDismissedMikuIds(new Set());
     setIsRunMusicReady(false);
     gameAudio.stopMusic({ reset: true });
+
+    // Fetch runToken before starting game
+    try {
+      const res = await fetch(apiUrl('/api/runs/start'), { method: 'POST', headers: authHeaders() });
+      const data = await res.json() as { runToken?: string };
+      if (data.runToken) {
+        setCurrentRunToken(data.runToken);
+      } else {
+        setAuthMessage(t('run_server_disconnected'));
+        return;
+      }
+    } catch {
+      setAuthMessage(t('run_server_disconnected'));
+      return;
+    }
+
+    setIsGameOver(false);
     setGameState('PLAYING');
     setDialogLines([]);
-    void fetch(apiUrl('/api/runs/start'), { method: 'POST', headers: authHeaders() })
-      .then((res) => res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`)))
-      .then((data: { runToken?: string }) => {
-        if (data.runToken) setCurrentRunToken(data.runToken);
-      })
-      .catch(() => {
-        setAuthMessage(t('run_server_disconnected'));
-      });
   };
 
   const finalizeMikuChatMemory = useCallback((chat: ActiveNpcChat) => {
