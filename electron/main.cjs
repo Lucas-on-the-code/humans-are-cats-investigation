@@ -5,7 +5,6 @@ const https = require('https');
 const fs = require('fs');
 const { URL } = require('url');
 
-const PORT = 3001;
 const distDir = path.join(__dirname, '..', 'dist');
 const publicDir = path.join(__dirname, '..', 'public');
 
@@ -132,8 +131,10 @@ const server = http.createServer((req, res) => {
 });
 
 let mainWindow = null;
+let gameUrl = null;
 
 function createWindow() {
+  if (!gameUrl) return;
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 720,
@@ -147,7 +148,7 @@ function createWindow() {
     },
   });
 
-  mainWindow.loadURL(`http://localhost:${PORT}`);
+  mainWindow.loadURL(gameUrl);
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -156,8 +157,13 @@ function createWindow() {
 
 app.whenReady().then(() => {
   API_SERVER = loadApiServer();
-  server.listen(PORT, '127.0.0.1', () => {
-    console.log(`Game: http://localhost:${PORT}  →  API: ${API_SERVER}`);
+  server.listen(0, '127.0.0.1', () => {
+    const address = server.address();
+    if (!address || typeof address === 'string') {
+      throw new Error('Failed to resolve the local game server port');
+    }
+    gameUrl = `http://127.0.0.1:${address.port}`;
+    console.log(`Game: ${gameUrl}  →  API: ${API_SERVER}`);
     createWindow();
   });
 });
