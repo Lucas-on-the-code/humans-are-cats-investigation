@@ -1,6 +1,6 @@
 {
   "name": "humans-are-cats-investigation",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "VOCALOID-themed stealth investigation platformer with a DeepSeek-powered Hatsune Miku NPC.",
   "main": "electron/main.cjs",
   "author": "张卡斯",
