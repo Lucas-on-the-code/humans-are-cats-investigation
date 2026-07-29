@@ -1,0 +1,15 @@
+{
+  "name": "game-state-core",
+  "type": "module",
+  "version": "0.1.0",
+  "files": [
+    "game_state_core_bg.wasm",
+    "game_state_core.js",
+    "game_state_core.d.ts"
+  ],
+  "main": "game_state_core.js",
+  "types": "game_state_core.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
