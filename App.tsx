@@ -18,7 +18,6 @@ import {
   mikuMemoryScopeForAccount,
   prepareMikuMemoryEndRequest,
   searchMikuTopicMemory,
-  syncAccountMikuMemoryFromServer,
 } from './utils/mikuMemory';
 import type { MikuMemoryEndResult } from './utils/mikuMemory';
 
@@ -1038,17 +1037,6 @@ const NpcChatBox: React.FC<{
               <button onClick={onDeclineInvite} className="px-3 py-1 game-button-secondary rounded-md text-xs font-bold">{t('npc_invite_wait')}</button>
               <button onClick={onStartChat} className="px-3 py-1 game-button rounded-md text-xs font-bold">{t('npc_invite_chat')}</button>
             </div>
-          ) : isMiku ? (
-            <form onSubmit={submit} className="flex gap-2">
-              <input
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                disabled={chat.isLoading}
-                className="min-w-0 flex-1 game-input rounded-md px-2 py-1 text-xs"
-                placeholder={t('npc_input_placeholder')}
-              />
-              <button disabled={chat.isLoading || !draft.trim()} className="px-3 py-1 game-button rounded-md text-white text-xs font-bold disabled:opacity-40">{t('npc_send')}</button>
-            </form>
           ) : (
             <button onClick={onClose} className="self-end text-cyan-200 hover:text-white px-1 py-0.5 text-xs animate-pulse font-bold">{t('npc_continue')}</button>
           )}
@@ -1249,23 +1237,33 @@ const App: React.FC = () => {
     return () => window.clearInterval(timer);
   }, [isGameOver, fetchGlobalLeaderboard]);
 
+  // 当 authToken 变化时，通过 /api/auth/me 验证 session 有效性并同步 authUser。
+  // 【注意】仅在 authUser 为空时才去服务端获取（场景：页面刷新后从 localStorage 恢复了 token，
+  // 但没有持久化的 user 信息）。如果 authUser 已存在（场景：刚登录/注册成功，saveAuth 已设置），
+  // 则跳过请求，避免 /me 请求失败导致刚登录的 authToken 被意外清除。
   useEffect(() => {
     if (!authToken) {
       setAuthUser(null);
       return;
     }
+    // authUser 已存在（由 saveAuth 或上一次 /me 成功设置），无需重复验证
+    if (authUser) return;
+
     let cancelled = false;
     const loadMe = async () => {
       try {
         const res = await fetch(apiUrl('/api/auth/me'), { headers: authHeaders() });
         const data = await res.json() as { user?: AuthUser | null };
         if (cancelled) return;
-        if (res.ok && data.user) setAuthUser(data.user);
-        else {
+        if (res.ok && data.user) {
+          setAuthUser(data.user);
+        } else {
+          // session 失效（过期 / 服务端重启密钥变更），清除本地 token
           setAuthToken(null);
-          localStorage.removeItem(AUTH_TOKEN_KEY);
+          try { localStorage.removeItem(AUTH_TOKEN_KEY); } catch { /* ignore */ }
         }
       } catch {
+        // 网络错误不删除 token —— 可能只是暂时断网，保留登录状态供重试
         if (!cancelled) setAuthMessage(t('auth_sync_fail'));
       }
     };
@@ -1274,17 +1272,7 @@ const App: React.FC = () => {
   }, [authToken, t]);
 
   useEffect(() => {
-    if (!authToken || !authUser?.id) return;
-    let cancelled = false;
-    const syncMikuMemory = async () => {
-      try {
-        await syncAccountMikuMemoryFromServer(authToken, authUser.id);
-      } catch {
-        if (!cancelled) setAuthMessage(t('miku_memory_sync_fail'));
-      }
-    };
-    void syncMikuMemory();
-    return () => { cancelled = true; };
+    // No-op: Miku memory sync removed
   }, [authToken, authUser?.id, t]);
 
   const sha256Hex = async (text: string) => {
@@ -1369,6 +1357,9 @@ const App: React.FC = () => {
     setAuthUser(null);
     setViewerLeaderboardEntry(null);
     setAuthMessage('');
+    setUploadedScoreId(null);
+    setUploadAttemptedRunToken(null);
+    setUploadBusy(false);
     try {
       localStorage.removeItem(AUTH_TOKEN_KEY);
     } catch {
@@ -1377,11 +1368,12 @@ const App: React.FC = () => {
   };
 
   const recordRun = (summary: RunSummary) => {
-    setLastRunSummary({ ...summary, codeHash: getCodeHash(), tamperFlags: getTamperFlags() });
+    setLastRunSummary(summary);
   };
 
   const submitGlobalScore = async (tokenOverride?: string) => {
     const token = tokenOverride || authToken;
+    console.log('[submitGlobalScore] called', { hasToken: !!token, hasSummary: !!lastRunSummary, hasRunToken: !!currentRunToken, uploadBusy, uploadedScoreId });
     if (!lastRunSummary || !token || uploadBusy || uploadedScoreId) return;
     if (!currentRunToken) {
       setAuthMessage(t('run_no_token'));
@@ -1391,15 +1383,18 @@ const App: React.FC = () => {
     setUploadAttemptedRunToken(currentRunToken);
     setAuthMessage(t('uploading_score'));
     try {
+      const body = JSON.stringify({ summary: lastRunSummary, runToken: currentRunToken });
+      console.log('[submitGlobalScore] sending request to /api/leaderboard/submit, token prefix:', token.slice(0, 10) + '...');
       const res = await fetch(apiUrl('/api/leaderboard/submit'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ summary: lastRunSummary, runToken: currentRunToken }),
+        body,
       });
       const data = await res.json() as { entry?: GlobalLeaderboardEntry; entries?: GlobalLeaderboardEntry[]; viewerBest?: GlobalLeaderboardEntry | null; error?: string };
+      console.log('[submitGlobalScore] response', { status: res.status, ok: res.ok, error: data.error, hasEntry: !!data.entry });
       if (!res.ok || !data.entry) throw new Error(data.error || 'UPLOAD_FAILED');
       setUploadedScoreId(data.entry.id);
       setViewerLeaderboardEntry(data.viewerBest ?? data.entry);
@@ -1412,6 +1407,8 @@ const App: React.FC = () => {
         ? t('upload_already_submitted')
         : message === 'LOGIN_REQUIRED'
           ? t('upload_login_required')
+          : message === 'RUN_USER_MISMATCH'
+            ? t('upload_score_rejected')
           : message === 'SCORE_TOO_HIGH' || message === 'DISTANCE_TOO_HIGH' || message === 'TIME_TRAVEL'
             ? t('upload_score_rejected')
             : t('upload_fail_generic');
@@ -1503,8 +1500,7 @@ const App: React.FC = () => {
     return () => document.removeEventListener('visibilitychange', syncMusic);
   }, [gameState, isRunMusicReady]);
 
-  const startRun = () => {
-    setIsGameOver(false);
+  const startRun = async () => {
     setLastRunSummary(null);
     setCurrentRunToken(null);
     setUploadedScoreId(null);
@@ -1513,16 +1509,25 @@ const App: React.FC = () => {
     setDismissedMikuIds(new Set());
     setIsRunMusicReady(false);
     gameAudio.stopMusic({ reset: true });
+
+    // Fetch runToken before starting game
+    try {
+      const res = await fetch(apiUrl('/api/runs/start'), { method: 'POST', headers: authHeaders() });
+      const data = await res.json() as { runToken?: string };
+      if (data.runToken) {
+        setCurrentRunToken(data.runToken);
+      } else {
+        setAuthMessage(t('run_server_disconnected'));
+        return;
+      }
+    } catch {
+      setAuthMessage(t('run_server_disconnected'));
+      return;
+    }
+
+    setIsGameOver(false);
     setGameState('PLAYING');
     setDialogLines([]);
-    void fetch(apiUrl('/api/runs/start'), { method: 'POST', headers: authHeaders() })
-      .then((res) => res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`)))
-      .then((data: { runToken?: string }) => {
-        if (data.runToken) setCurrentRunToken(data.runToken);
-      })
-      .catch(() => {
-        setAuthMessage(t('run_server_disconnected'));
-      });
   };
 
   const finalizeMikuChatMemory = useCallback((chat: ActiveNpcChat) => {
@@ -2073,7 +2078,7 @@ const App: React.FC = () => {
                          <button onClick={logout} className="px-4 py-2 game-button-secondary rounded-md">{t('logout')}</button>
                        </>
                      ) : (
-                       <button onClick={() => { setAuthMode('register'); setIsAuthModalOpen(true); }} className="px-4 py-2 game-button text-white font-bold rounded-md">{t('login_register_btn')}</button>
+                       <button onClick={() => { setAuthMode('login'); setIsAuthModalOpen(true); }} className="px-4 py-2 game-button text-white font-bold rounded-md">{t('login_register_btn')}</button>
                      )}
                      <button onClick={startRun} className="px-4 py-2 bg-yellow-400 text-slate-950 font-bold rounded-md hover:bg-yellow-300 transition-colors">{t('retry')}</button>
                    </div>

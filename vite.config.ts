@@ -1,8 +1,6 @@
 import path from 'path';
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
-import { handleMikuChatEndRequest, handleMikuChatRequest } from './server/deepseek-miku.mjs';
-import { handleVocaloidLyricsRequest, handleVocaloidSearchRequest } from './server/vocaloid-knowledge.mjs';
 import { handleAuthRequest, handleLeaderboardRequest, handleMikuMemoryRequest, handleRunStartRequest } from './server/auth-leaderboard.mjs';
 
 export default defineConfig(({ mode }) => {
@@ -20,17 +18,25 @@ export default defineConfig(({ mode }) => {
         {
           name: 'local-miku-chat-api',
           configureServer(server) {
-            server.middlewares.use('/api/miku-chat/end', (req, res) => {
-              void handleMikuChatEndRequest(req, res);
+            server.middlewares.use('/api/miku-chat/end', (_req, res) => {
+              res.statusCode = 503;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ error: 'CHAT_UNAVAILABLE' }));
             });
-            server.middlewares.use('/api/miku-chat', (req, res) => {
-              void handleMikuChatRequest(req, res);
+            server.middlewares.use('/api/miku-chat', (_req, res) => {
+              res.statusCode = 503;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ error: 'CHAT_UNAVAILABLE' }));
             });
-            server.middlewares.use('/api/vocaloid-search', (req, res) => {
-              void handleVocaloidSearchRequest(req, res);
+            server.middlewares.use('/api/vocaloid-search', (_req, res) => {
+              res.statusCode = 503;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ error: 'LOOKUP_UNAVAILABLE' }));
             });
-            server.middlewares.use('/api/vocaloid-lyrics', (req, res) => {
-              void handleVocaloidLyricsRequest(req, res);
+            server.middlewares.use('/api/vocaloid-lyrics', (_req, res) => {
+              res.statusCode = 503;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ error: 'LOOKUP_UNAVAILABLE' }));
             });
             server.middlewares.use('/api/miku-memory', (req, res) => {
               void handleMikuMemoryRequest(req, res);

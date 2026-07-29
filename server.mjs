@@ -1,8 +1,6 @@
 import { createReadStream, existsSync, statSync, readFileSync } from 'node:fs';
 import { join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { handleMikuChatEndRequest, handleMikuChatRequest } from './server/deepseek-miku.mjs';
-import { handleVocaloidLyricsRequest, handleVocaloidSearchRequest } from './server/vocaloid-knowledge.mjs';
 import { handleAuthRequest, handleLeaderboardRequest, handleMikuMemoryRequest, handleRunStartRequest } from './server/auth-leaderboard.mjs';
 
 const root = fileURLToPath(new URL('.', import.meta.url));
@@ -100,10 +98,12 @@ import { createServer } from 'node:http';
 const server = createServer(async function(req, res) {
   try {
     const url = req.url || '/';
-    if (url.startsWith('/api/miku-chat/end'))    { await handleMikuChatEndRequest(req, res); return; }
-    if (url.startsWith('/api/miku-chat'))         { await handleMikuChatRequest(req, res); return; }
-    if (url.startsWith('/api/vocaloid-search'))   { await handleVocaloidSearchRequest(req, res); return; }
-    if (url.startsWith('/api/vocaloid-lyrics'))   { await handleVocaloidLyricsRequest(req, res); return; }
+    if (url.startsWith('/api/miku-chat/end') || url.startsWith('/api/miku-chat')) {
+      return writeJson(res, 503, { error: 'CHAT_UNAVAILABLE' });
+    }
+    if (url.startsWith('/api/vocaloid-search') || url.startsWith('/api/vocaloid-lyrics')) {
+      return writeJson(res, 503, { error: 'LOOKUP_UNAVAILABLE' });
+    }
     if (url.startsWith('/api/miku-memory'))       { await handleMikuMemoryRequest(req, res); return; }
     if (url.startsWith('/api/auth'))              { await handleAuthRequest(req, res); return; }
     if (url.startsWith('/api/runs/start'))        { await handleRunStartRequest(req, res); return; }
